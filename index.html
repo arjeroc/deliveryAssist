@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1">
+<title>Assistant de Tournée</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="">
+<link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+
+<div id="appHeader">
+  <header class="topbar">
+    <div>
+      <h1>Assistant de Tournée</h1>
+      <div class="sub" id="headerSub">tm002</div>
+    </div>
+    <button class="icon-btn" data-action="open-admin" aria-label="Réglages">⚙️</button>
+  </header>
+
+  <nav id="mainTabBar">
+    <button data-mainpage="db" class="active">🗂️ Base de données</button>
+    <button data-mainpage="prep">🚚 Préparation</button>
+    <button data-mainpage="suivi">📍 Suivi</button>
+  </nav>
+</div>
+
+<main>
+
+  <!-- ================= PAGE 1 : BASE DE DONNÉES ================= -->
+  <div class="page active" id="page-db">
+
+    <div class="subnav" id="dbSubNav">
+      <button data-dbview="search" class="active">🔎 Recherche</button>
+      <button data-dbview="map">🗺️ Carte</button>
+    </div>
+
+    <div class="view active" id="view-search">
+      <div class="search-row">
+        <input type="text" id="searchBox" placeholder="🔎 Nom, numéro, rue, commune…" autocomplete="off">
+      </div>
+      <div class="result-count" id="resultCount">0 résultat(s)</div>
+      <div id="cardList"></div>
+      <div class="empty" id="emptyState" style="display:none;">
+        Aucune adresse pour l'instant.<br>Ouvre les réglages (⚙️) pour importer un CSV ou charger un exemple.
+      </div>
+    </div>
+
+    <div class="view" id="view-map">
+      <div id="mapContainer"></div>
+    </div>
+
+    <div class="view" id="view-fiche"></div>
+
+    <button id="fab" data-action="add-new-address" aria-label="Nouvelle adresse">+</button>
+  </div>
+
+  <!-- ================= PAGE 2 : PRÉPARATION TOURNÉE ================= -->
+  <div class="page" id="page-prep">
+    <div class="prep-totals" id="prepTotals"></div>
+
+    <div class="subnav" id="prepSubNav">
+      <button data-prepfilter="toutes" class="active">Toutes les adresses</button>
+      <button data-prepfilter="tournee">Dans la tournée</button>
+    </div>
+
+    <div id="prepCommuneSummary"></div>
+
+    <div class="search-row">
+      <input type="text" id="prepSearchBox" placeholder="🔎 Cibler une adresse…" autocomplete="off">
+    </div>
+
+    <div id="prepList"></div>
+    <div class="empty" id="prepEmptyState" style="display:none;"></div>
+
+    <div class="prep-actions">
+      <button class="danger" data-action="prep-new-tournee">🔄 Nouvelle tournée (vider la préparation)</button>
+    </div>
+  </div>
+
+  <!-- ================= PAGE 3 : SUIVI TOURNÉE ================= -->
+  <div class="page" id="page-suivi">
+
+    <div class="suivi-progress" id="suiviProgress"></div>
+
+    <div class="field-inline" id="suiviGeoStatus"></div>
+
+    <div id="suiviMapContainer"></div>
+
+    <h3 class="section-title">📍 À proximité</h3>
+    <div id="suiviProximityList"></div>
+    <div class="empty" id="suiviEmptyState" style="display:none;"></div>
+
+  </div>
+
+</main>
+
+<div id="adminOverlay">
+  <header class="topbar">
+    <h1>Réglages &amp; données</h1>
+    <button class="icon-btn" data-action="close-admin" aria-label="Fermer">✕</button>
+  </header>
+  <div id="adminBody"></div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+<script src="js/store.js"></script>
+<script src="js/prep.js"></script>
+<script src="js/geocode.js"></script>
+<script src="js/mapview.js"></script>
+<script src="js/ui.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
