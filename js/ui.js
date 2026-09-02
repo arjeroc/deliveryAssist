@@ -66,7 +66,7 @@ window.UI = (function () {
     if (name === "prep") renderPrep();
     if (name === "suivi") {
       suiviMap.ensureMap("suiviMapContainer");
-      suiviMap.invalidateSize();
+      if (suiviTab === "proximite") suiviMap.invalidateSize();
       startSuiviWatch();
       renderSuivi();
     } else {
@@ -552,9 +552,158 @@ window.UI = (function () {
   var suiviWatchId = null;
   var suiviUserPos = null;    // { lat, lon, accuracy }
   var suiviCentered = false;  // ne recentrer la carte qu'une seule fois sur le 1er relevé
+  var suiviTab = "tournee";   // 'tournee' | 'proximite'
 
   function suiviGeoStatusHTML(text, kind) {
     return '<span class="' + (kind || "") + '">' + escapeHtml(text) + '</span>';
+  }
+
+  function setSuiviTab(tab) {
+    suiviTab = tab;
+    ["tournee", "proximite"].forEach(function (t) {
+      document.getElementById("suivi-view-" + t).classList.toggle("active", t === tab);
+    });
+    els.suiviSubNav.querySelectorAll("[data-suivitab]").forEach(function (btn) {
+      btn.classList.toggle("active", btn.getAttribute("data-suivitab") === tab);
+    });
+    if (tab === "proximite") suiviMap.invalidateSize();
+  }
+
+  // --- onglet Tournée : cards par rue, parcourues dans l'ordre de la tournée ---
+  var tourneeIndex = 0;
+  var tourneeSwipeStartX = null;
+  var tourneeSwipeStartY = null;
+
+  function tourneeGroupKeyOf(row) {
+    return (row.rue || "").trim().toUpperCase() + "|" + (row.commune || "").trim().toUpperCase();
+  }
+
+  // Regroupe les adresses de la tournée par rue, ordonnées comme la tournée
+  // (ordre_zone puis, à égalité, nom de rue) ; à l'intérieur d'une rue, par ordre_rue puis numéro.
+  function buildTourneeGroups(idT) {
+    var groups = {};
+    var order = [];
+    Prep.listEntries(idT).forEach(function (e) {
+      var row = S.findRow(e.addressId);
+      if (!row) return;
+      var key = tourneeGroupKeyOf(row);
+      if (!groups[key]) {
+        groups[key] = { key: key, rue: row.rue || "(rue non renseignée)", commune: row.commune || "", ordreZone: null, items: [] };
+        order.push(key);
+      }
+      groups[key].items.push({ row: row, entry: e });
+      if (groups[key].ordreZone === null && row.ordre_zone !== "" && row.ordre_zone !== undefined && !isNaN(Number(row.ordre_zone))) {
+        groups[key].ordreZone = Number(row.ordre_zone);
+      }
+    });
+    var list = order.map(function (k) { return groups[k]; });
+    list.forEach(function (g) {
+      g.items.sort(function (a, b) {
+        var oa = (a.row.ordre_rue !== "" && a.row.ordre_rue !== undefined && !isNaN(Number(a.row.ordre_rue))) ? Number(a.row.ordre_rue) : Infinity;
+        var ob = (b.row.ordre_rue !== "" && b.row.ordre_rue !== undefined && !isNaN(Number(b.row.ordre_rue))) ? Number(b.row.ordre_rue) : Infinity;
+        if (oa !== ob) return oa - ob;
+        return (Number(a.row.numero) || 0) - (Number(b.row.numero) || 0);
+      });
+      g.lettres = g.items.reduce(function (s, it) { return s + it.entry.lettres; }, 0);
+      g.colis = g.items.reduce(function (s, it) { return s + it.entry.colis; }, 0);
+      g.allDelivered = g.items.every(function (it) { return it.entry.distribue; });
+    });
+    list.sort(function (a, b) {
+      var za = a.ordreZone === null ? Infinity : a.ordreZone;
+      var zb = b.ordreZone === null ? Infinity : b.ordreZone;
+      if (za !== zb) return za - zb;
+      return a.rue.localeCompare(b.rue, "fr");
+    });
+    return list;
+  }
+
+  function clampTourneeIndex(groups) {
+    if (!groups.length) { tourneeIndex = 0; return; }
+    if (tourneeIndex < 0) tourneeIndex = 0;
+    if (tourneeIndex > groups.length - 1) tourneeIndex = groups.length - 1;
+  }
+
+  function tourneeAddrRowHTML(item) {
+    var names = S.namesOf(item.row).join(" / ") || "(sans nom)";
+    var label = [item.row.numero, names].filter(Boolean).join(" — ");
+    var objets = [];
+    if (item.entry.lettres > 0) objets.push("✉" + item.entry.lettres);
+    if (item.entry.colis > 0) objets.push("📦" + item.entry.colis);
+    return '<div class="tournee-addr-row' + (item.entry.distribue ? " delivered" : "") + '">' +
+      '<span>' + escapeHtml(label) + '</span>' +
+      '<span class="tournee-addr-figures">' + objets.join(" ") + '</span>' +
+    '</div>';
+  }
+
+  function bindTourneeSwipe() {
+    var el = document.getElementById("tourneeCardSwipe");
+    if (!el) return;
+    el.addEventListener("touchstart", function (e) {
+      var t = e.changedTouches[0];
+      tourneeSwipeStartX = t.clientX;
+      tourneeSwipeStartY = t.clientY;
+    }, { passive: true });
+    el.addEventListener("touchend", function (e) {
+      if (tourneeSwipeStartX === null) return;
+      var t = e.changedTouches[0];
+      var dx = t.clientX - tourneeSwipeStartX;
+      var dy = t.clientY - tourneeSwipeStartY;
+      tourneeSwipeStartX = null;
+      if (Math.abs(dx) < 40 || Math.abs(dx) < Math.abs(dy) * 1.5) return;
+      tourneeNav(dx < 0 ? 1 : -1);
+    }, { passive: true });
+  }
+
+  function renderSuiviTournee() {
+    var idT = S.getIdTournee();
+    var groups = buildTourneeGroups(idT);
+    clampTourneeIndex(groups);
+
+    if (!groups.length) {
+      els.suiviTourneeWrap.innerHTML = '<div class="tournee-empty">Aucune adresse dans la tournée. Ajoute des lettres/colis depuis la page Préparation.</div>';
+      return;
+    }
+
+    var g = groups[tourneeIndex];
+    els.suiviTourneeWrap.innerHTML =
+      '<div class="tournee-nav">' +
+        '<button class="tournee-nav-btn" data-action="tournee-prev" ' + (tourneeIndex === 0 ? "disabled" : "") + ' aria-label="Rue précédente">‹</button>' +
+        '<div class="tournee-index">Rue ' + (tourneeIndex + 1) + ' / ' + groups.length + '</div>' +
+        '<button class="tournee-nav-btn" data-action="tournee-next" ' + (tourneeIndex === groups.length - 1 ? "disabled" : "") + ' aria-label="Rue suivante">›</button>' +
+      '</div>' +
+      '<div class="tournee-card" id="tourneeCardSwipe">' +
+        '<div class="tournee-card-head">' +
+          (g.commune ? '<span class="commune-dot" style="background:' + S.getCommuneColor(g.commune) + ';"></span>' : "") +
+          '<div class="tournee-card-title">' + escapeHtml(g.rue) + '</div>' +
+        '</div>' +
+        (g.commune ? '<div class="tournee-card-sub">' + escapeHtml(g.commune) + '</div>' : "") +
+        '<div class="tournee-card-figures">' + g.items.length + ' adresse(s) · ' + g.lettres + ' lettre(s) · ' + g.colis + ' colis</div>' +
+        '<div class="tournee-addr-list">' + g.items.map(tourneeAddrRowHTML).join("") + '</div>' +
+        '<button class="tournee-validate' + (g.allDelivered ? " done" : "") + '" data-action="tournee-validate" data-key="' + escapeHtml(g.key) + '">' +
+          (g.allDelivered ? "✓ Rue validée (annuler)" : "✅ Valider la rue / zone") +
+        '</button>' +
+      '</div>';
+
+    bindTourneeSwipe();
+  }
+
+  function tourneeNav(delta) {
+    var groups = buildTourneeGroups(S.getIdTournee());
+    tourneeIndex += delta;
+    clampTourneeIndex(groups);
+    renderSuiviTournee();
+  }
+
+  function tourneeValidate(key) {
+    var idT = S.getIdTournee();
+    var groups = buildTourneeGroups(idT);
+    var g = groups.filter(function (x) { return x.key === key; })[0];
+    if (!g) return;
+    var target = !g.allDelivered;
+    g.items.forEach(function (it) { Prep.setDelivered(idT, it.row.id, target); });
+    renderSuiviTournee();
+    renderSuiviProgress();
+    toast(target ? "Rue validée." : "Validation annulée.", "ok");
   }
 
   function startSuiviWatch() {
@@ -632,6 +781,7 @@ window.UI = (function () {
 
   function renderSuivi() {
     renderSuiviProgress();
+    renderSuiviTournee();
 
     var idT = S.getIdTournee();
     var entries = Prep.listEntries(idT);
@@ -773,6 +923,7 @@ window.UI = (function () {
       refreshHeader();
       renderPrep();
       suiviCentered = false;
+      tourneeIndex = 0;
       renderSuivi();
     });
     document.getElementById("admFileInput").addEventListener("change", function (ev) {
@@ -910,10 +1061,20 @@ window.UI = (function () {
       case "suivi-deliver":
         toggleDelivered(actionEl.getAttribute("data-id"));
         break;
+      case "tournee-prev":
+        tourneeNav(-1);
+        break;
+      case "tournee-next":
+        tourneeNav(1);
+        break;
+      case "tournee-validate":
+        tourneeValidate(actionEl.getAttribute("data-key"));
+        break;
       case "prep-new-tournee":
         if (confirmAction('Vider la préparation de la tournée "' + S.getIdTournee() + '" ? Les adresses de la base ne sont pas affectées, seules les quantités lettres/colis sont effacées.')) {
           Prep.resetTournee(S.getIdTournee());
           renderPrep();
+          tourneeIndex = 0;
           toast("Nouvelle tournée : préparation vidée.", "ok");
         }
         break;
@@ -962,6 +1123,8 @@ window.UI = (function () {
     els.prepCommuneSummary = document.getElementById("prepCommuneSummary");
 
     els.suiviProgress = document.getElementById("suiviProgress");
+    els.suiviSubNav = document.getElementById("suiviSubNav");
+    els.suiviTourneeWrap = document.getElementById("suiviTourneeWrap");
     els.suiviGeoStatus = document.getElementById("suiviGeoStatus");
     els.suiviProximityList = document.getElementById("suiviProximityList");
     els.suiviEmptyState = document.getElementById("suiviEmptyState");
@@ -971,6 +1134,7 @@ window.UI = (function () {
       if (e.target.closest("[data-dbview]")) showView(e.target.closest("[data-dbview]").getAttribute("data-dbview"));
       if (e.target.closest("[data-mainpage]")) showMainPage(e.target.closest("[data-mainpage]").getAttribute("data-mainpage"));
       if (e.target.closest("[data-prepfilter]")) setPrepFilter(e.target.closest("[data-prepfilter]").getAttribute("data-prepfilter"));
+      if (e.target.closest("[data-suivitab]")) setSuiviTab(e.target.closest("[data-suivitab]").getAttribute("data-suivitab"));
     });
 
     els.searchBox.addEventListener("input", renderSearch);

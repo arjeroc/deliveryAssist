@@ -83,13 +83,21 @@
 
     <div class="suivi-progress" id="suiviProgress"></div>
 
-    <div class="field-inline" id="suiviGeoStatus"></div>
+    <div class="subnav" id="suiviSubNav">
+      <button data-suivitab="tournee" class="active">🚚 Tournée</button>
+      <button data-suivitab="proximite">📍 À proximité</button>
+    </div>
 
-    <div id="suiviMapContainer"></div>
+    <div class="suivi-view active" id="suivi-view-tournee">
+      <div id="suiviTourneeWrap"></div>
+    </div>
 
-    <h3 class="section-title">📍 À proximité</h3>
-    <div id="suiviProximityList"></div>
-    <div class="empty" id="suiviEmptyState" style="display:none;"></div>
+    <div class="suivi-view" id="suivi-view-proximite">
+      <div class="field-inline" id="suiviGeoStatus"></div>
+      <div id="suiviMapContainer"></div>
+      <div id="suiviProximityList"></div>
+      <div class="empty" id="suiviEmptyState" style="display:none;"></div>
+    </div>
 
   </div>
 

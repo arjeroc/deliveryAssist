@@ -123,6 +123,36 @@ mark{background:#fff2a8;color:inherit;border-radius:3px;padding:0 1px;}
 
 .section-title{font-size:13.5px;text-transform:uppercase;letter-spacing:.03em;color:var(--muted);margin:14px 0 8px;}
 
+.suivi-view{display:none;}
+.suivi-view.active{display:block;}
+
+/* --- suivi : onglet Tournée (cards par rue, navigation gauche/droite) --- */
+.tournee-empty{text-align:center;color:var(--muted);font-size:13.5px;padding:36px 12px;}
+
+.tournee-nav{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px;}
+.tournee-nav-btn{
+  width:46px;height:46px;flex:0 0 auto;border-radius:50%;border:1px solid var(--line);background:#fff;
+  font-size:22px;font-weight:700;color:var(--accent);cursor:pointer;
+}
+.tournee-nav-btn:disabled{opacity:.3;}
+.tournee-nav-btn:not(:disabled):active{background:#eef1ec;}
+.tournee-index{font-size:12.5px;color:var(--muted);font-weight:700;text-align:center;}
+
+.tournee-card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;touch-action:pan-y;}
+.tournee-card-head{display:flex;align-items:center;gap:8px;}
+.tournee-card-title{font-size:17px;font-weight:700;}
+.tournee-card-sub{font-size:12.5px;color:var(--muted);margin:2px 0 10px;}
+.tournee-card-figures{font-size:13px;color:var(--muted);margin-bottom:10px;}
+
+.tournee-addr-list{border-top:1px dashed var(--line);}
+.tournee-addr-row{display:flex;justify-content:space-between;gap:8px;padding:8px 0;border-bottom:1px dashed var(--line);font-size:13.5px;}
+.tournee-addr-row:last-child{border-bottom:none;}
+.tournee-addr-row.delivered{opacity:.5;text-decoration:line-through;}
+.tournee-addr-figures{color:var(--muted);white-space:nowrap;}
+
+.tournee-validate{width:100%;margin-top:12px;padding:12px;border-radius:10px;background:var(--accent);color:#fff;border:none;font-weight:700;font-size:14.5px;}
+.tournee-validate.done{background:var(--chip);color:var(--muted);}
+
 .proximity-card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin-bottom:10px;}
 .proximity-head{display:flex;justify-content:space-between;align-items:center;gap:8px;}
 .proximity-dist{font-weight:700;white-space:nowrap;font-size:13px;}
