@@ -29,11 +29,37 @@ window.UI = (function () {
     });
   }
 
-  function toast(msg, kind) {
-    els.toast.textContent = msg;
-    els.toast.className = "toast show " + (kind || "");
+  // Un toast peut porter une action d'annulation : sur le terrain, pouvoir
+  // revenir en arrière après coup vaut mieux qu'une confirmation avant chaque geste.
+  var pendingUndo = null;
+
+  function toast(msg, kind, undoFn) {
     clearTimeout(lastToastTimer);
-    lastToastTimer = setTimeout(function () { els.toast.className = "toast"; }, 3200);
+    pendingUndo = undoFn || null;
+    if (undoFn) {
+      els.toast.innerHTML = '<span>' + escapeHtml(msg) + '</span>' +
+        '<button class="toast-undo" data-action="toast-undo">Annuler</button>';
+    } else {
+      els.toast.textContent = msg;
+    }
+    els.toast.className = "toast show " + (undoFn ? "has-action " : "") + (kind || "");
+    lastToastTimer = setTimeout(function () {
+      els.toast.className = "toast";
+      pendingUndo = null;
+    }, undoFn ? 6000 : 3200);
+  }
+
+  function hideToast() {
+    clearTimeout(lastToastTimer);
+    els.toast.className = "toast";
+    pendingUndo = null;
+  }
+
+  function runUndo() {
+    if (!pendingUndo) return;
+    var fn = pendingUndo;
+    hideToast();
+    fn();
   }
 
   function confirmAction(msg) { return window.confirm(msg); }
@@ -569,6 +595,117 @@ window.UI = (function () {
     if (tab === "proximite") suiviMap.invalidateSize();
   }
 
+  // ---------------------------------------------------------------------
+  // Actions sur une adresse — mêmes gestes dans l'onglet Tournée et dans
+  // l'onglet À proximité. Trois boutons explicites plutôt qu'un swipe : le
+  // balayage horizontal sert déjà à passer d'une rue à l'autre.
+  // ---------------------------------------------------------------------
+  function addrActionsHTML(addrId, entry) {
+    var estDistribue = entry.statut === Prep.STATUTS.DISTRIBUE;
+    var estAbandonne = entry.statut === Prep.STATUTS.ABANDONNE;
+    return '<div class="addr-actions">' +
+      '<button class="addr-btn nav" data-action="addr-naviguer" data-id="' + addrId + '" aria-label="Ouvrir la navigation">🧭</button>' +
+      '<button class="addr-btn stop' + (estAbandonne ? " active" : "") + '" data-action="addr-abandonner" data-id="' + addrId + '" aria-label="Ne pas distribuer">⊘</button>' +
+      '<button class="addr-btn ok' + (estDistribue ? " active" : "") + '" data-action="addr-valider" data-id="' + addrId + '" aria-label="Valider la distribution">✓</button>' +
+    '</div>';
+  }
+
+  function objetsLabel(entry) {
+    var objets = [];
+    if (entry.lettres > 0) objets.push("✉" + entry.lettres);
+    if (entry.colis > 0) objets.push("📦" + entry.colis);
+    return objets.join(" ");
+  }
+
+  // Itinéraire vers l'adresse : coordonnées GPS si on les a, sinon l'adresse
+  // en toutes lettres — l'application de cartographie du téléphone fera le reste.
+  function naviguerVers(addrId) {
+    var row = S.findRow(addrId);
+    if (!row) return;
+    var dest;
+    if (S.hasGPS(row)) {
+      dest = row.latitude + "," + row.longitude;
+    } else {
+      dest = [row.numero, row.rue, row.code_postal, row.commune].filter(Boolean).join(" ");
+      if (!dest) { toast("Cette adresse n'a ni GPS ni libellé exploitable.", "warn"); return; }
+    }
+    window.open("https://www.google.com/maps/dir/?api=1&destination=" + encodeURIComponent(dest), "_blank");
+  }
+
+  function refreshSuiviAfterChange() {
+    renderSuiviProgress();
+    renderSuiviTournee();
+    renderSuiviProximite();
+  }
+
+  function applyStatut(addrIds, statut, motif, message) {
+    var idT = S.getIdTournee();
+    var snapshot = Prep.setStatutMany(idT, addrIds, statut, motif);
+    refreshSuiviAfterChange();
+    toast(message, "ok", function () {
+      Prep.restore(idT, snapshot);
+      refreshSuiviAfterChange();
+    });
+  }
+
+  // ✓ et ⊘ font aussi office de retour arrière : ré-appuyer sur le bouton
+  // actif remet l'adresse "à faire", sans passer par un menu.
+  function addrValider(addrId) {
+    var entry = Prep.getEntry(S.getIdTournee(), addrId);
+    if (entry.statut === Prep.STATUTS.DISTRIBUE) {
+      applyStatut([addrId], Prep.STATUTS.A_FAIRE, "", "Adresse remise à faire.");
+    } else {
+      applyStatut([addrId], Prep.STATUTS.DISTRIBUE, "", "Adresse distribuée.");
+    }
+  }
+
+  function addrAbandonner(addrId) {
+    var entry = Prep.getEntry(S.getIdTournee(), addrId);
+    if (entry.statut === Prep.STATUTS.ABANDONNE) {
+      applyStatut([addrId], Prep.STATUTS.A_FAIRE, "", "Adresse remise à faire.");
+      return;
+    }
+    var row = S.findRow(addrId);
+    var titre = row ? [row.numero, S.namesOf(row).join(" / ")].filter(Boolean).join(" — ") : "cette adresse";
+    openMotifSheet("Ne pas distribuer", titre, { scope: "addr", ids: [addrId] });
+  }
+
+  // ---------------------------------------------------------------------
+  // Panneau de motifs (bas d'écran) — sert pour une adresse comme pour une zone
+  // ---------------------------------------------------------------------
+  var sheetTarget = null;
+
+  function openMotifSheet(titre, sousTitre, target) {
+    sheetTarget = target;
+    els.sheetBody.innerHTML =
+      '<div class="sheet-title">' + escapeHtml(titre) + '</div>' +
+      '<div class="sheet-sub">' + escapeHtml(sousTitre) + '</div>' +
+      '<div class="sheet-motifs">' +
+        Prep.MOTIFS.map(function (m) {
+          return '<button class="sheet-motif" data-action="motif-pick" data-motif="' + m.key + '">' +
+            '<span class="sheet-motif-icon">' + m.icon + '</span>' + escapeHtml(m.label) +
+          '</button>';
+        }).join("") +
+      '</div>' +
+      '<button class="sheet-cancel" data-action="sheet-close">Annuler</button>';
+    els.sheetOverlay.classList.add("open");
+  }
+
+  function closeSheet() {
+    els.sheetOverlay.classList.remove("open");
+    sheetTarget = null;
+  }
+
+  function pickMotif(motifKey) {
+    if (!sheetTarget) return;
+    var ids = sheetTarget.ids;
+    var estZone = sheetTarget.scope === "zone";
+    closeSheet();
+    applyStatut(ids, Prep.STATUTS.ABANDONNE, motifKey,
+      estZone ? ids.length + " adresse(s) abandonnée(s) — " + Prep.motifLabel(motifKey)
+              : "Non distribuée — " + Prep.motifLabel(motifKey));
+  }
+
   // --- onglet Tournée : cards par rue, parcourues dans l'ordre de la tournée ---
   var tourneeIndex = 0;
   var tourneeSwipeStartX = null;
@@ -606,7 +743,10 @@ window.UI = (function () {
       });
       g.lettres = g.items.reduce(function (s, it) { return s + it.entry.lettres; }, 0);
       g.colis = g.items.reduce(function (s, it) { return s + it.entry.colis; }, 0);
-      g.allDelivered = g.items.every(function (it) { return it.entry.distribue; });
+      g.distribuees = g.items.filter(function (it) { return it.entry.statut === Prep.STATUTS.DISTRIBUE; }).length;
+      g.abandonnees = g.items.filter(function (it) { return it.entry.statut === Prep.STATUTS.ABANDONNE; }).length;
+      g.restantes = g.items.length - g.distribuees - g.abandonnees;
+      g.terminee = g.restantes === 0;
     });
     list.sort(function (a, b) {
       var za = a.ordreZone === null ? Infinity : a.ordreZone;
@@ -626,12 +766,16 @@ window.UI = (function () {
   function tourneeAddrRowHTML(item) {
     var names = S.namesOf(item.row).join(" / ") || "(sans nom)";
     var label = [item.row.numero, names].filter(Boolean).join(" — ");
-    var objets = [];
-    if (item.entry.lettres > 0) objets.push("✉" + item.entry.lettres);
-    if (item.entry.colis > 0) objets.push("📦" + item.entry.colis);
-    return '<div class="tournee-addr-row' + (item.entry.distribue ? " delivered" : "") + '">' +
-      '<span>' + escapeHtml(label) + '</span>' +
-      '<span class="tournee-addr-figures">' + objets.join(" ") + '</span>' +
+    var meta = objetsLabel(item.entry);
+    if (item.entry.statut === Prep.STATUTS.ABANDONNE) {
+      meta = [meta, "⊘ " + Prep.motifLabel(item.entry.motif)].filter(Boolean).join(" · ");
+    }
+    return '<div class="tournee-addr-row is-' + item.entry.statut + '">' +
+      '<div class="tournee-addr-main">' +
+        '<div class="tournee-addr-name">' + escapeHtml(label) + '</div>' +
+        '<div class="tournee-addr-meta">' + escapeHtml(meta) + '</div>' +
+      '</div>' +
+      addrActionsHTML(item.row.id, item.entry) +
     '</div>';
   }
 
@@ -652,6 +796,35 @@ window.UI = (function () {
       if (Math.abs(dx) < 40 || Math.abs(dx) < Math.abs(dy) * 1.5) return;
       tourneeNav(dx < 0 ? 1 : -1);
     }, { passive: true });
+  }
+
+  function zoneProgressHTML(g) {
+    var total = g.items.length;
+    var pctDist = total ? (g.distribuees / total) * 100 : 0;
+    var pctAband = total ? (g.abandonnees / total) * 100 : 0;
+    var details = [g.distribuees + " / " + total + " distribuées"];
+    if (g.abandonnees) details.push(g.abandonnees + " abandonnée(s)");
+    details.push(g.restantes + " restante(s)");
+    return '<div class="zone-progress">' +
+      '<div class="zone-progress-bar">' +
+        '<div class="zone-progress-done" style="width:' + pctDist + '%;"></div>' +
+        '<div class="zone-progress-skip" style="width:' + pctAband + '%;"></div>' +
+      '</div>' +
+      '<div class="zone-progress-text">' + escapeHtml(details.join(" · ")) + '</div>' +
+    '</div>';
+  }
+
+  function zoneActionsHTML(g) {
+    var key = escapeHtml(g.key);
+    if (g.terminee) {
+      return '<div class="zone-actions">' +
+        '<button class="zone-btn reopen" data-action="zone-rouvrir" data-key="' + key + '">↺ Rouvrir la zone</button>' +
+      '</div>';
+    }
+    return '<div class="zone-actions">' +
+      '<button class="zone-btn stop" data-action="zone-abandonner" data-key="' + key + '">⊘ Abandonner</button>' +
+      '<button class="zone-btn ok" data-action="zone-valider" data-key="' + key + '">✓ Valider la zone</button>' +
+    '</div>';
   }
 
   function renderSuiviTournee() {
@@ -677,11 +850,10 @@ window.UI = (function () {
           '<div class="tournee-card-title">' + escapeHtml(g.rue) + '</div>' +
         '</div>' +
         (g.commune ? '<div class="tournee-card-sub">' + escapeHtml(g.commune) + '</div>' : "") +
-        '<div class="tournee-card-figures">' + g.items.length + ' adresse(s) · ' + g.lettres + ' lettre(s) · ' + g.colis + ' colis</div>' +
+        '<div class="tournee-card-figures">' + g.lettres + ' lettre(s) · ' + g.colis + ' colis</div>' +
+        zoneProgressHTML(g) +
         '<div class="tournee-addr-list">' + g.items.map(tourneeAddrRowHTML).join("") + '</div>' +
-        '<button class="tournee-validate' + (g.allDelivered ? " done" : "") + '" data-action="tournee-validate" data-key="' + escapeHtml(g.key) + '">' +
-          (g.allDelivered ? "✓ Rue validée (annuler)" : "✅ Valider la rue / zone") +
-        '</button>' +
+        zoneActionsHTML(g) +
       '</div>';
 
     bindTourneeSwipe();
@@ -694,16 +866,40 @@ window.UI = (function () {
     renderSuiviTournee();
   }
 
-  function tourneeValidate(key) {
-    var idT = S.getIdTournee();
-    var groups = buildTourneeGroups(idT);
-    var g = groups.filter(function (x) { return x.key === key; })[0];
+  function findGroup(key) {
+    return buildTourneeGroups(S.getIdTournee()).filter(function (g) { return g.key === key; })[0];
+  }
+
+  function idsRestants(g) {
+    return g.items.filter(function (it) { return it.entry.statut === Prep.STATUTS.A_FAIRE; })
+                  .map(function (it) { return it.row.id; });
+  }
+
+  // Une action de masse ne demande confirmation qu'à partir de deux adresses :
+  // en dessous, l'annulation proposée dans le toast suffit largement.
+  function zoneValider(key) {
+    var g = findGroup(key);
     if (!g) return;
-    var target = !g.allDelivered;
-    g.items.forEach(function (it) { Prep.setDelivered(idT, it.row.id, target); });
-    renderSuiviTournee();
-    renderSuiviProgress();
-    toast(target ? "Rue validée." : "Validation annulée.", "ok");
+    var ids = idsRestants(g);
+    if (!ids.length) return;
+    if (ids.length > 1 && !confirmAction("Marquer les " + ids.length + " adresses restantes de " + g.rue + " comme distribuées ?")) return;
+    applyStatut(ids, Prep.STATUTS.DISTRIBUE, "", ids.length + " adresse(s) distribuée(s).");
+  }
+
+  function zoneAbandonner(key) {
+    var g = findGroup(key);
+    if (!g) return;
+    var ids = idsRestants(g);
+    if (!ids.length) return;
+    openMotifSheet("Abandonner la zone", ids.length + " adresse(s) restante(s) — " + g.rue, { scope: "zone", ids: ids });
+  }
+
+  function zoneRouvrir(key) {
+    var g = findGroup(key);
+    if (!g) return;
+    var ids = g.items.map(function (it) { return it.row.id; });
+    if (!confirmAction("Remettre les " + ids.length + " adresses de " + g.rue + " à faire ?")) return;
+    applyStatut(ids, Prep.STATUTS.A_FAIRE, "", "Zone rouverte.");
   }
 
   function startSuiviWatch() {
@@ -752,17 +948,18 @@ window.UI = (function () {
     var objets = [];
     if (entry.lettres > 0) objets.push("✉ " + entry.lettres + " lettre(s)");
     if (entry.colis > 0) objets.push("📦 " + entry.colis + " colis");
+    if (entry.statut === Prep.STATUTS.ABANDONNE) objets.push("⊘ " + Prep.motifLabel(entry.motif));
     return (
-      '<div class="proximity-card' + (entry.distribue ? " delivered" : "") + '">' +
+      '<div class="proximity-card is-' + entry.statut + '">' +
         '<div class="proximity-head">' +
           '<div><div class="card-title">' + escapeHtml(names) + '</div>' +
           '<div class="card-line muted">' + escapeHtml(addr) + '</div></div>' +
           (item.zone ? '<span class="proximity-dist zone-' + item.zone.key + '">' + fmtDistance(item.distance) + '</span>' : '') +
         '</div>' +
-        '<div class="proximity-objects">' + objets.join(" + ") + '</div>' +
-        '<button class="deliver" data-action="suivi-deliver" data-id="' + row.id + '">' +
-          (entry.distribue ? "✓ Distribué (annuler)" : "Distribué") +
-        '</button>' +
+        '<div class="proximity-foot">' +
+          '<div class="proximity-objects">' + escapeHtml(objets.join(" · ")) + '</div>' +
+          addrActionsHTML(row.id, entry) +
+        '</div>' +
       '</div>'
     );
   }
@@ -770,19 +967,30 @@ window.UI = (function () {
   function renderSuiviProgress() {
     var idT = S.getIdTournee();
     var p = Prep.progress(idT);
-    var pctLettres = p.lettresTotal ? Math.round((p.lettresDistribuees / p.lettresTotal) * 100) : 0;
-    var pctColis = p.colisTotal ? Math.round((p.colisDistribuees / p.colisTotal) * 100) : 0;
+    var pctDist = p.adressesTotal ? (p.adressesDistribuees / p.adressesTotal) * 100 : 0;
+    var pctAband = p.adressesTotal ? (p.adressesAbandonnees / p.adressesTotal) * 100 : 0;
     els.suiviProgress.innerHTML =
       '<div class="suivi-progress-row total"><span>Tournée</span><span>' + p.lettresTotal + ' lettres — ' + p.colisTotal + ' colis</span></div>' +
       '<div class="suivi-progress-row"><span>Distribués</span><span class="ok">' + p.lettresDistribuees + ' lettres — ' + p.colisDistribuees + ' colis</span></div>' +
+      (p.adressesAbandonnees
+        ? '<div class="suivi-progress-row"><span>Non distribués</span><span class="skipped">' + p.lettresAbandonnees + ' lettres — ' + p.colisAbandonnees + ' colis</span></div>'
+        : "") +
       '<div class="suivi-progress-row"><span>Restants</span><span class="pending">' + p.lettresRestantes + ' lettres — ' + p.colisRestantes + ' colis</span></div>' +
-      '<div class="suivi-progressbar"><div class="suivi-progressbar-fill" style="width:' + Math.round((pctLettres + pctColis) / 2) + '%;"></div></div>';
+      '<div class="suivi-progressbar">' +
+        '<div class="suivi-progressbar-fill" style="width:' + pctDist + '%;"></div>' +
+        '<div class="suivi-progressbar-skip" style="width:' + pctAband + '%;"></div>' +
+      '</div>' +
+      '<div class="suivi-progress-addr">' + p.adressesDistribuees + " / " + p.adressesTotal + ' adresses distribuées' +
+        (p.adressesAbandonnees ? ' · ' + p.adressesAbandonnees + ' abandonnée(s)' : "") + '</div>';
   }
 
   function renderSuivi() {
     renderSuiviProgress();
     renderSuiviTournee();
+    renderSuiviProximite();
+  }
 
+  function renderSuiviProximite() {
     var idT = S.getIdTournee();
     var entries = Prep.listEntries(idT);
     var withGPS = [], withoutGPS = 0, horsZone = 0;
@@ -805,7 +1013,10 @@ window.UI = (function () {
     // --- carte ---
     suiviMap.ensureMap("suiviMapContainer");
     var points = withGPS.map(function (item) {
-      var color = item.entry.distribue ? "#2f6b4f" : (item.zone ? item.zone.color : "#6b7268");
+      var color = "#6b7268";
+      if (item.entry.statut === Prep.STATUTS.DISTRIBUE) color = "#2f6b4f";
+      else if (item.entry.statut === Prep.STATUTS.ABANDONNE) color = "#a15c00";
+      else if (item.zone) color = item.zone.color;
       var names = S.namesOf(item.row).join(" / ") || "(sans nom)";
       return {
         id: item.row.id, lat: Number(item.row.latitude), lon: Number(item.row.longitude), color: color,
@@ -853,13 +1064,6 @@ window.UI = (function () {
       '</div>';
     }
     els.suiviProximityList.innerHTML = withGPS.map(proximityCardHTML).join("") + note;
-  }
-
-  function toggleDelivered(addrId) {
-    var idT = S.getIdTournee();
-    var entry = Prep.getEntry(idT, addrId);
-    Prep.setDelivered(idT, addrId, !entry.distribue);
-    renderSuivi();
   }
 
   // ---------------------------------------------------------------------
@@ -1058,17 +1262,39 @@ window.UI = (function () {
           renderPrep();
         }
         break;
-      case "suivi-deliver":
-        toggleDelivered(actionEl.getAttribute("data-id"));
-        break;
       case "tournee-prev":
         tourneeNav(-1);
         break;
       case "tournee-next":
         tourneeNav(1);
         break;
-      case "tournee-validate":
-        tourneeValidate(actionEl.getAttribute("data-key"));
+      case "addr-valider":
+        addrValider(actionEl.getAttribute("data-id"));
+        break;
+      case "addr-abandonner":
+        addrAbandonner(actionEl.getAttribute("data-id"));
+        break;
+      case "addr-naviguer":
+        naviguerVers(actionEl.getAttribute("data-id"));
+        break;
+      case "zone-valider":
+        zoneValider(actionEl.getAttribute("data-key"));
+        break;
+      case "zone-abandonner":
+        zoneAbandonner(actionEl.getAttribute("data-key"));
+        break;
+      case "zone-rouvrir":
+        zoneRouvrir(actionEl.getAttribute("data-key"));
+        break;
+      case "motif-pick":
+        pickMotif(actionEl.getAttribute("data-motif"));
+        break;
+      case "sheet-close":
+        // Seul un appui sur le fond (ou sur "Annuler") ferme le panneau.
+        if (actionEl === e.target || actionEl.classList.contains("sheet-cancel")) closeSheet();
+        break;
+      case "toast-undo":
+        runUndo();
         break;
       case "prep-new-tournee":
         if (confirmAction('Vider la préparation de la tournée "' + S.getIdTournee() + '" ? Les adresses de la base ne sont pas affectées, seules les quantités lettres/colis sont effacées.')) {
@@ -1114,6 +1340,8 @@ window.UI = (function () {
     els.adminOverlay = document.getElementById("adminOverlay");
     els.adminBody = document.getElementById("adminBody");
     els.toast = document.getElementById("toast");
+    els.sheetOverlay = document.getElementById("sheetOverlay");
+    els.sheetBody = document.getElementById("sheetBody");
 
     els.prepSearchBox = document.getElementById("prepSearchBox");
     els.prepList = document.getElementById("prepList");
