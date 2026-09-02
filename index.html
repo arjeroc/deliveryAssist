@@ -36,8 +36,11 @@
     </div>
 
     <div class="view active" id="view-search">
-      <div class="search-row">
-        <input type="text" id="searchBox" placeholder="🔎 Nom, numéro, rue, commune…" autocomplete="off">
+      <div class="search-wrap">
+        <div class="search-row">
+          <input type="text" id="searchBox" placeholder="🔎 Nom, numéro, rue, commune…" autocomplete="off">
+        </div>
+        <div class="suggest" id="searchSuggest"></div>
       </div>
       <div class="result-count" id="resultCount">0 résultat(s)</div>
       <div id="cardList"></div>
@@ -66,8 +69,11 @@
 
     <div id="prepCommuneSummary"></div>
 
-    <div class="search-row">
-      <input type="text" id="prepSearchBox" placeholder="🔎 Cibler une adresse…" autocomplete="off">
+    <div class="search-wrap">
+      <div class="search-row">
+        <input type="text" id="prepSearchBox" placeholder="🔎 Cibler une adresse…" autocomplete="off">
+      </div>
+      <div class="suggest" id="prepSuggest"></div>
     </div>
 
     <div id="prepList"></div>

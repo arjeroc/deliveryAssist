@@ -46,8 +46,18 @@ window.Store = (function () {
     return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
   }
 
+  // Normalisation de recherche : décomposition Unicode, suppression des
+  // diacritiques, majuscules, et toute ponctuation ramenée à un espace.
+  //   "Élodie Léa-Marie l'Abbé"  ->  "ELODIE LEA MARIE L ABBE"
   function normalize(s) {
-    return (s || "").toString().normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
+    return (s === undefined || s === null ? "" : String(s))
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toUpperCase()
+      .replace(/Œ/g, "OE")
+      .replace(/Æ/g, "AE")
+      .replace(/[^A-Z0-9]+/g, " ")
+      .trim();
   }
 
   function blankRow() {
@@ -256,6 +266,8 @@ window.Store = (function () {
   // --- persistance --------------------------------------------------------------
 
   function persist() {
+    // Toute écriture invalide l'index : il sera reconstruit à la recherche suivante.
+    invalidateIndex();
     try {
       localStorage.setItem(DATA_KEY, JSON.stringify(state.rows));
       localStorage.setItem(META_KEY, JSON.stringify({ idTournee: state.idTournee }));
@@ -355,13 +367,153 @@ window.Store = (function () {
 
   // --- recherche ----------------------------------------------------------------
 
-  function search(query) {
-    var q = normalize(query);
-    if (!q) return state.rows.slice();
-    return state.rows.filter(function (r) {
-      var hay = normalize([r.nom_famille, r.rue, r.commune, r.lieu_dit, r.numero, r.code_postal].join(" "));
-      return hay.indexOf(q) !== -1;
+  // Mots vides des libellés de voie : ignorés car non discriminants. Ils sont
+  // retirés de la requête comme des données, donc "12 RUE DE LA REPUBLIQUE",
+  // "RUE REPUBLIQUE" et "REPUBLIQUE" désignent la même adresse.
+  var STOPWORDS = {
+    DE: 1, DU: 1, DES: 1, D: 1, LA: 1, LE: 1, LES: 1, L: 1, AU: 1, AUX: 1, ET: 1, EN: 1
+  };
+
+  // Abréviations de voie ramenées à une forme unique, dans les deux sens :
+  // saisir "AV" trouve "AVENUE", et inversement.
+  var TYPES_VOIE = {
+    R: "RUE", RUE: "RUE",
+    AV: "AVENUE", AVE: "AVENUE", AVENUE: "AVENUE",
+    BD: "BOULEVARD", BLD: "BOULEVARD", BOULEVARD: "BOULEVARD",
+    RTE: "ROUTE", ROUTE: "ROUTE",
+    CH: "CHEMIN", CHE: "CHEMIN", CHEMIN: "CHEMIN",
+    IMP: "IMPASSE", IMPASSE: "IMPASSE",
+    PL: "PLACE", PLACE: "PLACE",
+    ALL: "ALLEE", ALLEE: "ALLEE",
+    SQ: "SQUARE", SQUARE: "SQUARE",
+    ST: "SAINT", SAINT: "SAINT",
+    STE: "SAINTE", SAINTE: "SAINTE",
+    RES: "RESIDENCE", RESIDENCE: "RESIDENCE",
+    LOT: "LOTISSEMENT", LOTISSEMENT: "LOTISSEMENT",
+    HAM: "HAMEAU", HAMEAU: "HAMEAU",
+    PAS: "PASSAGE", PASSAGE: "PASSAGE"
+  };
+
+  function tokenize(text) {
+    var n = normalize(text);
+    if (!n) return [];
+    return n.split(" ").filter(Boolean).map(function (t) { return TYPES_VOIE[t] || t; });
+  }
+
+  // Retire les mots vides — sauf si la requête n'était composée que de ça,
+  // auquel cas mieux vaut chercher littéralement que ne rien chercher.
+  function contentTokens(tokens) {
+    var kept = tokens.filter(function (t) { return !STOPWORDS[t]; });
+    return kept.length ? kept : tokens;
+  }
+
+  function isNumeric(t) { return /^[0-9]+$/.test(t); }
+
+  // Distance de Levenshtein bornée : dès que la distance minimale possible
+  // dépasse "max", on abandonne — inutile de calculer la valeur exacte.
+  function levenshtein(a, b, max) {
+    if (a === b) return 0;
+    var la = a.length, lb = b.length;
+    if (Math.abs(la - lb) > max) return max + 1;
+    var prev = new Array(lb + 1), cur = new Array(lb + 1), i, j;
+    for (j = 0; j <= lb; j++) prev[j] = j;
+    for (i = 1; i <= la; i++) {
+      cur[0] = i;
+      var best = cur[0];
+      for (j = 1; j <= lb; j++) {
+        var cost = a.charCodeAt(i - 1) === b.charCodeAt(j - 1) ? 0 : 1;
+        cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + cost);
+        if (cur[j] < best) best = cur[j];
+      }
+      if (best > max) return max + 1;
+      for (j = 0; j <= lb; j++) prev[j] = cur[j];
+    }
+    return prev[lb];
+  }
+
+  // Tolérance aux fautes de frappe proportionnelle à la longueur du mot :
+  // sur un mot court, une lettre de différence change généralement de mot.
+  function maxDistanceFor(token) {
+    if (token.length >= 7) return 2;
+    if (token.length >= 4) return 1;
+    return 0;
+  }
+
+  // Qualité de correspondance d'un token de requête face à un token indexé.
+  function tokenMatchScore(queryToken, indexedToken) {
+    if (indexedToken === queryToken) return 1;
+    if (indexedToken.indexOf(queryToken) === 0) return 0.85;   // saisie partielle
+    // Les nombres ne tolèrent pas l'à-peu-près : le 12 n'est pas le 13.
+    if (isNumeric(queryToken) || isNumeric(indexedToken)) return 0;
+    var max = maxDistanceFor(queryToken);
+    if (!max) return 0;
+    return levenshtein(queryToken, indexedToken, max) <= max ? 0.6 : 0;
+  }
+
+  // --- index de recherche ---------------------------------------------------
+
+  // Champs pondérés : un nom de destinataire est plus discriminant qu'une commune.
+  var FIELD_WEIGHTS = { noms: 3, numero: 2.5, rue: 2, lieuDit: 1.4, commune: 1.2, codePostal: 1 };
+
+  var searchIndex = null; // reconstruit paresseusement après toute modification
+
+  function invalidateIndex() { searchIndex = null; }
+
+  function buildIndex() {
+    searchIndex = state.rows.map(function (r) {
+      return {
+        row: r,
+        fields: {
+          noms: contentTokens(tokenize(namesOf(r).join(" "))),
+          numero: tokenize(r.numero),
+          rue: contentTokens(tokenize(r.rue)),
+          lieuDit: contentTokens(tokenize(r.lieu_dit)),
+          commune: contentTokens(tokenize(r.commune)),
+          codePostal: tokenize(r.code_postal)
+        }
+      };
     });
+    return searchIndex;
+  }
+
+  function getIndex() { return searchIndex || buildIndex(); }
+
+  // Meilleur score obtenu par un token de requête sur l'ensemble des champs.
+  function scoreTokenAgainstEntry(queryToken, entry) {
+    var best = 0;
+    Object.keys(entry.fields).forEach(function (field) {
+      var weight = FIELD_WEIGHTS[field];
+      entry.fields[field].forEach(function (indexedToken) {
+        var s = tokenMatchScore(queryToken, indexedToken) * weight;
+        if (s > best) best = s;
+      });
+    });
+    return best;
+  }
+
+  // Tous les tokens de la requête doivent trouver preneur (ET logique) : c'est
+  // ce qui garde la recherche tolérante sans la rendre bavarde.
+  function searchScored(query) {
+    var queryTokens = contentTokens(tokenize(query));
+    if (!queryTokens.length) {
+      return state.rows.map(function (r) { return { row: r, score: 0 }; });
+    }
+    var out = [];
+    getIndex().forEach(function (entry) {
+      var total = 0;
+      for (var i = 0; i < queryTokens.length; i++) {
+        var s = scoreTokenAgainstEntry(queryTokens[i], entry);
+        if (!s) return; // un token sans correspondance élimine la ligne
+        total += s;
+      }
+      out.push({ row: entry.row, score: total });
+    });
+    out.sort(function (a, b) { return b.score - a.score; });
+    return out;
+  }
+
+  function search(query) {
+    return searchScored(query).map(function (x) { return x.row; });
   }
 
   // --- API publique ---------------------------------------------------------------
@@ -404,7 +556,9 @@ window.Store = (function () {
     toCSV: toCSV,
 
     search: search,
+    searchScored: searchScored,
     normalize: normalize,
+    tokenize: tokenize,
 
     addRow: function (row) { state.rows.unshift(row); persist(); },
     updateRow: function (id, patch) {

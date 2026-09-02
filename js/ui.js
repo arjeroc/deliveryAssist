@@ -64,15 +64,50 @@ window.UI = (function () {
 
   function confirmAction(msg) { return window.confirm(msg); }
 
-  // Met en évidence la portion de texte correspondant à la recherche en cours.
-  // Best-effort : ne surligne que sur correspondance casse-insensible directe
-  // (le filtrage lui-même, dans Store.search, reste insensible aux accents).
+  // Normalise caractère par caractère en gardant la correspondance vers le
+  // texte d'origine, pour pouvoir surligner malgré accents et ponctuation.
+  function normalizeWithMap(text) {
+    var norm = "", map = [];
+    for (var i = 0; i < text.length; i++) {
+      var c = S.normalize(text[i]);
+      if (!c) c = " "; // ponctuation et espaces : conservés comme séparateurs
+      for (var k = 0; k < c.length; k++) { norm += c[k]; map.push(i); }
+    }
+    return { norm: norm, map: map };
+  }
+
+  // Surligne chaque terme de la recherche, quelle que soit la façon dont il a
+  // été saisi : "republique" met en évidence "République".
   function highlight(text, query) {
     text = text || "";
-    if (!query) return escapeHtml(text);
-    var idx = text.toLowerCase().indexOf(query.toLowerCase());
-    if (idx === -1) return escapeHtml(text);
-    return escapeHtml(text.slice(0, idx)) + "<mark>" + escapeHtml(text.slice(idx, idx + query.length)) + "</mark>" + escapeHtml(text.slice(idx + query.length));
+    var tokens = S.tokenize(query).filter(function (t) { return t.length > 1; });
+    if (!tokens.length) return escapeHtml(text);
+
+    var m = normalizeWithMap(text);
+    var ranges = [];
+    tokens.forEach(function (t) {
+      var from = 0, idx;
+      while ((idx = m.norm.indexOf(t, from)) !== -1) {
+        ranges.push([m.map[idx], m.map[idx + t.length - 1] + 1]);
+        from = idx + t.length;
+      }
+    });
+    if (!ranges.length) return escapeHtml(text);
+
+    ranges.sort(function (a, b) { return a[0] - b[0]; });
+    var merged = [ranges[0]];
+    ranges.slice(1).forEach(function (r) {
+      var last = merged[merged.length - 1];
+      if (r[0] <= last[1]) last[1] = Math.max(last[1], r[1]);
+      else merged.push(r);
+    });
+
+    var out = "", pos = 0;
+    merged.forEach(function (r) {
+      out += escapeHtml(text.slice(pos, r[0])) + "<mark>" + escapeHtml(text.slice(r[0], r[1])) + "</mark>";
+      pos = r[1];
+    });
+    return out + escapeHtml(text.slice(pos));
   }
 
   // ---------------------------------------------------------------------
@@ -161,6 +196,57 @@ window.UI = (function () {
     els.resultCount.textContent = results.length + " résultat(s) sur " + S.getRows().length;
     els.cardList.innerHTML = results.map(function (r) { return cardHTML(r, q); }).join("");
     els.emptyState.style.display = S.getRows().length === 0 ? "block" : "none";
+  }
+
+  // ---------------------------------------------------------------------
+  // Autocomplétion — assez de contexte sur chaque ligne pour reconnaître
+  // la bonne adresse sans avoir à ouvrir la fiche.
+  // ---------------------------------------------------------------------
+  function suggestItemHTML(row, query, cible) {
+    var adresse = [row.numero, row.rue].filter(Boolean).join(" ") || "(adresse non renseignée)";
+    var noms = S.namesOf(row).join(" / ");
+    var contexte = [row.code_postal, row.commune].filter(Boolean).join(" ");
+    return '<button type="button" class="suggest-item" data-action="suggest-pick" data-id="' + row.id + '" data-cible="' + cible + '">' +
+      '<span class="suggest-main">' + highlight(adresse, query) +
+        (noms ? ' <span class="suggest-sep">—</span> ' + highlight(noms, query) : "") + '</span>' +
+      (contexte ? '<span class="suggest-context">' + highlight(contexte, query) + '</span>' : "") +
+    '</button>';
+  }
+
+  function renderSuggest(cible) {
+    var input = cible === "prep" ? els.prepSearchBox : els.searchBox;
+    var box = cible === "prep" ? els.prepSuggest : els.searchSuggest;
+    var q = input.value;
+    // Rien à proposer sans saisie ; et sur une correspondance unique, déjà
+    // visible dans la liste en dessous, la proposer n'apporte rien.
+    var scored = S.normalize(q) ? S.searchScored(q) : [];
+    if (scored.length < 2) {
+      box.innerHTML = "";
+      box.classList.remove("open");
+      return;
+    }
+    box.innerHTML = scored.slice(0, 8).map(function (x) { return suggestItemHTML(x.row, q, cible); }).join("");
+    box.classList.add("open");
+  }
+
+  function closeSuggest(cible) {
+    var box = cible === "prep" ? els.prepSuggest : els.searchSuggest;
+    box.innerHTML = "";
+    box.classList.remove("open");
+  }
+
+  function pickSuggestion(id, cible) {
+    closeSuggest(cible);
+    if (cible === "prep") {
+      // Sur la préparation, on cible l'adresse dans la liste : le livreur
+      // enchaîne directement sur les compteurs lettres/colis.
+      var row = S.findRow(id);
+      if (!row) return;
+      els.prepSearchBox.value = [row.numero, row.rue, row.commune].filter(Boolean).join(" ");
+      renderPrep();
+    } else {
+      openFiche(id);
+    }
   }
 
   // ---------------------------------------------------------------------
@@ -1296,6 +1382,9 @@ window.UI = (function () {
       case "toast-undo":
         runUndo();
         break;
+      case "suggest-pick":
+        pickSuggestion(actionEl.getAttribute("data-id"), actionEl.getAttribute("data-cible"));
+        break;
       case "prep-new-tournee":
         if (confirmAction('Vider la préparation de la tournée "' + S.getIdTournee() + '" ? Les adresses de la base ne sont pas affectées, seules les quantités lettres/colis sont effacées.')) {
           Prep.resetTournee(S.getIdTournee());
@@ -1332,6 +1421,8 @@ window.UI = (function () {
     els.viewFiche = els["view-fiche"];
     els.cardList = document.getElementById("cardList");
     els.searchBox = document.getElementById("searchBox");
+    els.searchSuggest = document.getElementById("searchSuggest");
+    els.prepSuggest = document.getElementById("prepSuggest");
     els.resultCount = document.getElementById("resultCount");
     els.emptyState = document.getElementById("emptyState");
     els.fab = document.getElementById("fab");
@@ -1358,6 +1449,8 @@ window.UI = (function () {
     els.suiviEmptyState = document.getElementById("suiviEmptyState");
 
     document.body.addEventListener("click", function (e) {
+      // Un clic ailleurs referme les propositions d'autocomplétion.
+      if (!e.target.closest(".search-wrap")) { closeSuggest("db"); closeSuggest("prep"); }
       handleClick(e);
       if (e.target.closest("[data-dbview]")) showView(e.target.closest("[data-dbview]").getAttribute("data-dbview"));
       if (e.target.closest("[data-mainpage]")) showMainPage(e.target.closest("[data-mainpage]").getAttribute("data-mainpage"));
@@ -1365,8 +1458,10 @@ window.UI = (function () {
       if (e.target.closest("[data-suivitab]")) setSuiviTab(e.target.closest("[data-suivitab]").getAttribute("data-suivitab"));
     });
 
-    els.searchBox.addEventListener("input", renderSearch);
-    els.prepSearchBox.addEventListener("input", renderPrep);
+    els.searchBox.addEventListener("input", function () { renderSearch(); renderSuggest("db"); });
+    els.prepSearchBox.addEventListener("input", function () { renderPrep(); renderSuggest("prep"); });
+    els.searchBox.addEventListener("focus", function () { renderSuggest("db"); });
+    els.prepSearchBox.addEventListener("focus", function () { renderSuggest("prep"); });
 
     var adminObserver = new MutationObserver(function () {
       if (els.adminOverlay.classList.contains("open") && document.getElementById("admIdTournee")) {
