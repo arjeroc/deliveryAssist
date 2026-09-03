@@ -266,7 +266,7 @@ mark{background:#fff2a8;color:inherit;border-radius:3px;padding:0 1px;}
    jamais passer au-dessus du bandeau principal (sticky) lors du défilement. */
 #mapContainer{
   position:relative;z-index:0;
-  height:calc(100vh - 400px);min-height:300px;border-radius:10px;overflow:hidden;border:1px solid var(--line);
+  height:calc(100vh - 320px);min-height:320px;border-radius:10px;overflow:hidden;border:1px solid var(--line);
 }
 #suiviMapContainer{
   position:relative;z-index:0;
@@ -274,7 +274,14 @@ mark{background:#fff2a8;color:inherit;border-radius:3px;padding:0 1px;}
 }
 
 /* --- parcours de tournée (onglet Carte) --- */
-.pc-panel{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin-bottom:10px;}
+.pc-panel{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:10px 12px;margin-bottom:10px;}
+.pc-entete{display:flex;align-items:center;gap:8px;}
+.pc-toggle{
+  flex:1;display:flex;align-items:center;gap:8px;border:none;background:none;padding:4px 0;
+  font-size:13.5px;color:var(--ink);text-align:left;cursor:pointer;
+}
+.pc-chevron{color:var(--accent);font-size:12px;width:12px;}
+.pc-detail{margin-top:10px;padding-top:10px;border-top:1px dashed var(--line);}
 .pc-stats{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:13px;}
 .pc-bornes{display:flex;flex-direction:column;gap:3px;margin-top:8px;font-size:12.5px;color:var(--muted);}
 .pc-borne-txt b{color:var(--ink);}
@@ -285,7 +292,6 @@ mark{background:#fff2a8;color:inherit;border-radius:3px;padding:0 1px;}
 .pc-actions{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-top:10px;}
 .pc-btn{border:1px solid var(--line);background:#fff;border-radius:8px;padding:7px 11px;font-size:12.5px;font-weight:700;color:var(--accent);cursor:pointer;}
 .pc-btn:active{background:#eef1ec;}
-.pc-check{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;color:var(--muted);}
 
 /* repères posés sur la carte */
 .pc-num{

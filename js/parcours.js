@@ -342,12 +342,31 @@ window.Parcours = (function () {
   // ---------------------------------------------------------------------
   // Dessin
   // ---------------------------------------------------------------------
-  var map = null;
-  var calques = {};
+  // Plusieurs cartes partagent le même modèle de parcours : celle de la Base de
+  // données et celle du Suivi. Chacune garde ses propres calques, sinon la
+  // seconde effacerait les couches de la première.
+  var vues = [];
   var modele = null;
-  var onSelect = null;
-  var afficherAdresses = false;
-  var derniereTrace = null;
+
+  function vuePour(instance, options) {
+    var carte = instance.getMap();
+    if (!carte) return null;
+    var v = vues.filter(function (x) { return x.map === carte; })[0];
+    if (!v) {
+      v = {
+        map: carte,
+        calques: {
+          trace: L.layerGroup(), numeros: L.layerGroup(),
+          communes: L.layerGroup(), adresses: L.layerGroup()
+        }
+      };
+      carte.on("zoomend", function () { appliquerZoom(v); });
+      vues.push(v);
+    }
+    v.leger = !!options.leger;
+    v.onSelect = options.onSelect || null;
+    return v;
+  }
 
   function icone(html, classe, taille) {
     return L.divIcon({ className: "", html: '<div class="' + classe + '">' + html + '</div>',
@@ -416,19 +435,31 @@ window.Parcours = (function () {
     };
   }
 
-  function dessinerTrace(points, trace) {
-    calques.trace.clearLayers();
+  // Dans le Suivi, la trace n'est qu'un repère de fond : elle doit se lire
+  // sans concurrencer les marqueurs de distribution.
+  function allegerStyle(style) {
+    return {
+      color: style.color,
+      weight: 3,
+      opacity: 0.45,
+      dashArray: style.dashArray
+    };
+  }
+
+  function dessinerTrace(v, points, trace) {
+    v.calques.trace.clearLayers();
     for (var i = 1; i < points.length; i++) {
       var geom = (trace && trace.troncons[i - 1] && trace.troncons[i - 1].length > 1)
         ? trace.troncons[i - 1]
         : [[points[i - 1].lat, points[i - 1].lon], [points[i].lat, points[i].lon]];
-      L.polyline(geom, styleTroncon(points[i - 1], points[i])).addTo(calques.trace);
+      var style = styleTroncon(points[i - 1], points[i]);
+      L.polyline(geom, v.leger ? allegerStyle(style) : style).addTo(v.calques.trace);
     }
   }
 
-  function dessinerReperes(points) {
-    calques.numeros.clearLayers();
-    calques.communes.clearLayers();
+  function dessinerReperes(v, points) {
+    v.calques.numeros.clearLayers();
+    v.calques.communes.clearLayers();
     var total = modele.etapes.length;
 
     points.forEach(function (p, i) {
@@ -441,7 +472,7 @@ window.Parcours = (function () {
           icon: icone(estDepart ? "D" : "A", "pc-borne " + (estDepart ? "pc-depart" : "pc-arrivee"), 30),
           zIndexOffset: 1000
         }).bindPopup(estDepart ? "<strong>Départ</strong><br>" + contenu : "<strong>Arrivée</strong><br>" + contenu)
-          .addTo(calques.communes);
+          .addTo(v.calques.communes);
         return;
       }
 
@@ -451,17 +482,17 @@ window.Parcours = (function () {
         L.marker([p.lat, p.lon], { icon: icone("", "pc-commune", 16) })
           .bindTooltip(e.commune, { permanent: false, direction: "top" })
           .bindPopup(contenu)
-          .addTo(calques.communes);
+          .addTo(v.calques.communes);
       }
 
       L.marker([p.lat, p.lon], {
         icon: icone(String(e.rang), "pc-num pc-niv-" + (p.niveau || "estime"), 24)
-      }).bindPopup(contenu).addTo(calques.numeros);
+      }).bindPopup(contenu).addTo(v.calques.numeros);
     });
   }
 
-  function dessinerAdresses() {
-    calques.adresses.clearLayers();
+  function dessinerAdresses(v) {
+    v.calques.adresses.clearLayers();
     modele.rows.forEach(function (r) {
       var niveau = niveauDe(r);
       if (!niveau) return;
@@ -472,37 +503,50 @@ window.Parcours = (function () {
       m.bindPopup("<strong>" + esc(noms) + "</strong><br>" +
         esc([r.numero, r.rue].filter(Boolean).join(" ")) + "<br>" +
         esc(S.communeLabelOf(r)) + "<br><em>" + LIBELLES[niveau] + "</em>");
-      if (onSelect) m.on("click", function () { onSelect(r.id); });
-      m.addTo(calques.adresses);
+      if (v.onSelect) m.on("click", function () { v.onSelect(r.id); });
+      m.addTo(v.calques.adresses);
     });
   }
 
   // Trois niveaux de lecture : la forme générale de loin, les numéros d'étape
-  // en approchant, les adresses seulement au plus près.
-  function appliquerZoom() {
-    if (!map) return;
-    var z = map.getZoom();
-    basculer(calques.numeros, z >= ZOOM_NUMEROS);
-    basculer(calques.adresses, afficherAdresses && z >= ZOOM_ADRESSES);
+  // en approchant, les adresses seulement au plus près — et seulement si
+  // l'utilisateur les a demandées dans les réglages.
+  function appliquerZoom(v) {
+    if (!v || !v.map) return;
+    var z = v.map.getZoom();
+    basculer(v, v.calques.numeros, !v.leger && z >= ZOOM_NUMEROS);
+    basculer(v, v.calques.adresses,
+      !v.leger && S.getSettings().afficherAdressesCarte === true && z >= ZOOM_ADRESSES);
   }
 
-  function basculer(calque, visible) {
-    if (!map || !calque) return;
-    if (visible && !map.hasLayer(calque)) map.addLayer(calque);
-    if (!visible && map.hasLayer(calque)) map.removeLayer(calque);
+  function basculer(v, calque, visible) {
+    if (!v.map || !calque) return;
+    if (visible && !v.map.hasLayer(calque)) v.map.addLayer(calque);
+    if (!visible && v.map.hasLayer(calque)) v.map.removeLayer(calque);
   }
 
-  function recentrer() {
-    if (!map || !modele) return;
+  // Réapplique les règles d'affichage sur toutes les cartes ouvertes, après un
+  // changement de réglage.
+  function rafraichirAffichage() {
+    vues.forEach(appliquerZoom);
+  }
+
+  function recentrer(instance) {
+    var carte = instance && instance.getMap();
+    if (!carte || !modele) return;
     var pts = placees().map(function (e) { return [e.lat, e.lon]; });
     if (!pts.length) return;
-    try { map.fitBounds(pts, { padding: [30, 30] }); } catch (e) { /* ignore */ }
+    try { carte.fitBounds(pts, { padding: [30, 30] }); } catch (e) { /* ignore */ }
   }
 
-  function effacer() {
-    Object.keys(calques).forEach(function (k) {
-      if (map && map.hasLayer(calques[k])) map.removeLayer(calques[k]);
-      calques[k].clearLayers();
+  function effacer(instance) {
+    var carte = instance && instance.getMap();
+    vues.forEach(function (v) {
+      if (carte && v.map !== carte) return;
+      Object.keys(v.calques).forEach(function (k) {
+        if (v.map.hasLayer(v.calques[k])) v.map.removeLayer(v.calques[k]);
+        v.calques[k].clearLayers();
+      });
     });
   }
 
@@ -510,52 +554,40 @@ window.Parcours = (function () {
   // pour que l'appelant puisse rafraîchir son résumé avec la distance réelle.
   function afficher(instance, options) {
     options = options || {};
-    onSelect = options.onSelect || null;
-    map = instance.getMap();
-    if (!map) return Promise.resolve(null);
-
-    if (!calques.trace) {
-      calques.trace = L.layerGroup();
-      calques.numeros = L.layerGroup();
-      calques.communes = L.layerGroup();
-      calques.adresses = L.layerGroup();
-      map.on("zoomend", appliquerZoom);
-    }
+    var v = vuePour(instance, options);
+    if (!v) return Promise.resolve(null);
 
     modele = construire();
     var points = pointsTrace();
 
-    effacer();
+    effacer(instance);
     if (!points.length) return Promise.resolve({ modele: modele, trace: null });
 
-    map.addLayer(calques.trace);
-    map.addLayer(calques.communes);
-    dessinerTrace(points, null);
-    dessinerReperes(points);
-    dessinerAdresses();
-    appliquerZoom();
-    if (options.recentrer !== false) recentrer();
+    v.map.addLayer(v.calques.trace);
+    dessinerTrace(v, points, null);
+    if (!v.leger) {
+      // En mode allégé, seule la trace est dessinée : les repères d'étape
+      // masqueraient les marqueurs de distribution du Suivi.
+      v.map.addLayer(v.calques.communes);
+      dessinerReperes(v, points);
+      dessinerAdresses(v);
+    }
+    appliquerZoom(v);
+    if (options.recentrer !== false) recentrer(instance);
 
     if (options.router === false || points.length < 2) {
       return Promise.resolve({ modele: modele, trace: null });
     }
     return router(points)
       .then(function (trace) {
-        derniereTrace = trace;
-        dessinerTrace(points, trace);
+        dessinerTrace(v, points, trace);
         return { modele: modele, trace: trace };
       })
       .catch(function () {
         // Routage indisponible : la trace reste en lignes directes, ce que le
         // résumé signale plutôt que de laisser croire à un tracé routier.
-        derniereTrace = null;
         return { modele: modele, trace: null };
       });
-  }
-
-  function setAfficherAdresses(v) {
-    afficherAdresses = !!v;
-    appliquerZoom();
   }
 
   function distanceRoutee(trace) {
@@ -569,7 +601,7 @@ window.Parcours = (function () {
     afficher: afficher,
     effacer: effacer,
     recentrer: recentrer,
-    setAfficherAdresses: setAfficherAdresses,
+    rafraichirAffichage: rafraichirAffichage,
     geocoderManquants: geocoderManquants,
     aGeocoder: aGeocoder,
     distanceRoutee: distanceRoutee,

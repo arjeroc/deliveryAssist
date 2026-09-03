@@ -36,7 +36,10 @@ window.Store = (function () {
       // 'complete'      : toute la tournée, zones de distribution standard incluses.
       modeSuivi: "distributions",
       // Scan d'étiquette : expérimental, désactivable si la lecture déçoit.
-      scanActif: true
+      scanActif: true,
+      // Pastilles d'adresses sur la carte : masquées par défaut, la trace du
+      // parcours se lisant beaucoup mieux sans elles.
+      afficherAdressesCarte: false
     }
   };
 

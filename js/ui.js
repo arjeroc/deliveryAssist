@@ -127,7 +127,10 @@ window.UI = (function () {
     if (name === "prep") renderPrep();
     if (name === "suivi") {
       suiviMap.ensureMap("suiviMapContainer");
-      if (suiviTab === "proximite") suiviMap.invalidateSize();
+      if (suiviTab === "proximite") {
+        suiviMap.invalidateSize();
+        dessinerTraceSuivi();
+      }
       startSuiviWatch();
       renderSuivi();
     } else {
@@ -158,7 +161,8 @@ window.UI = (function () {
   // ---------------------------------------------------------------------
   // Onglet Carte — parcours de tournée reconstruit, ou nuage d'adresses
   // ---------------------------------------------------------------------
-  var mapMode = "parcours"; // 'parcours' | 'points'
+  var mapMode = "parcours";      // 'parcours' | 'points'
+  var parcoursDeplie = false;    // résumé replié par défaut
   var parcoursDernier = null;
 
   function setMapView(mode) {
@@ -171,7 +175,7 @@ window.UI = (function () {
 
   function renderMapView() {
     if (mapMode === "points") {
-      Parcours.effacer();
+      Parcours.effacer(M);
       els.parcoursPanel.innerHTML = "";
       M.renderAll(S.getRows());
       return;
@@ -212,35 +216,43 @@ window.UI = (function () {
     if (metres > 0) distance = fmtKm(metres) + " par la route";
     else if (r.distanceFiable) distance = "~" + fmtKm(r.distanceVolOiseau) + " à vol d'oiseau";
 
+    // Replié, le résumé tient sur une ligne et laisse la carte respirer ;
+    // le détail reste à un appui.
     els.parcoursPanel.innerHTML =
       '<div class="pc-panel">' +
-        '<div class="pc-stats">' +
-          '<span><strong>' + r.communes + '</strong> commune(s)</span>' +
-          '<span><strong>' + r.rues + '</strong> rue(s)</span>' +
-          '<span><strong>' + r.adresses + '</strong> adresse(s)</span>' +
-          '<span><strong>' + r.etapes + '</strong> étape(s)</span>' +
-          (distance ? '<span><strong>' + escapeHtml(distance) + '</strong></span>' : "") +
+        '<div class="pc-entete">' +
+          '<button class="pc-toggle" data-action="parcours-basculer">' +
+            '<span class="pc-chevron">' + (parcoursDeplie ? "▾" : "▸") + '</span>' +
+            '<strong>' + r.etapes + '</strong> étape(s)' +
+            (distance ? ' · <strong>' + escapeHtml(distance) + '</strong>' : "") +
+          '</button>' +
+          '<button class="pc-btn" data-action="parcours-recentrer" aria-label="Recentrer sur la tournée">🎯</button>' +
         '</div>' +
-        (r.depart
-          ? '<div class="pc-bornes">' +
-              '<span class="pc-borne-txt"><b>Départ</b> ' + escapeHtml(r.depart.rue) + ' · ' + escapeHtml(r.depart.commune) + '</span>' +
-              '<span class="pc-borne-txt"><b>Arrivée</b> ' + escapeHtml(r.arrivee.rue) + ' · ' + escapeHtml(r.arrivee.commune) + '</span>' +
+        (parcoursDeplie
+          ? '<div class="pc-detail">' +
+              '<div class="pc-stats">' +
+                '<span><strong>' + r.communes + '</strong> commune(s)</span>' +
+                '<span><strong>' + r.rues + '</strong> rue(s)</span>' +
+                '<span><strong>' + r.adresses + '</strong> adresse(s)</span>' +
+              '</div>' +
+              (r.depart
+                ? '<div class="pc-bornes">' +
+                    '<span class="pc-borne-txt"><b>Départ</b> ' + escapeHtml(r.depart.rue) + ' · ' + escapeHtml(r.depart.commune) + '</span>' +
+                    '<span class="pc-borne-txt"><b>Arrivée</b> ' + escapeHtml(r.arrivee.rue) + ' · ' + escapeHtml(r.arrivee.commune) + '</span>' +
+                  '</div>'
+                : "") +
+              '<div class="pc-legende">' +
+                legendeItem("reel", p.reel + " GPS relevé(s)") +
+                legendeItem("geocode", p.geocode + " géocodée(s)") +
+                legendeItem("approx", p.approx + " approchée(s)") +
+                (r.etapesEstimees ? legendeItem("estime", r.etapesEstimees + " étape(s) estimée(s)") : "") +
+              '</div>' +
             '</div>'
           : "") +
-        '<div class="pc-legende">' +
-          legendeItem("reel", p.reel + " GPS relevé(s)") +
-          legendeItem("geocode", p.geocode + " géocodée(s)") +
-          legendeItem("approx", p.approx + " approchée(s)") +
-          (r.etapesEstimees ? legendeItem("estime", r.etapesEstimees + " étape(s) estimée(s)") : "") +
-        '</div>' +
         (sansPosition
           ? '<div class="pc-alerte">' + sansPosition + ' adresse(s) sans position. ' +
               '<button class="pc-btn" data-action="parcours-geocoder">Géocoder</button></div>'
           : "") +
-        '<div class="pc-actions">' +
-          '<button class="pc-btn" data-action="parcours-recentrer">🎯 Recentrer</button>' +
-          '<label class="pc-check"><input type="checkbox" data-action="parcours-adresses"> Adresses (au zoom)</label>' +
-        '</div>' +
       '</div>';
   }
 
@@ -259,6 +271,7 @@ window.UI = (function () {
       toast(bilan.places + " adresse(s) positionnée(s) sur " + bilan.demandes + ".", "ok");
       renderSearch();
       renderMapView();
+      Parcours.effacer(suiviMap); // la trace du Suivi sera refaite à la prochaine visite
     }).catch(function () {
       toast("Géocodage indisponible (pas de réseau ou service hors service).", "err");
       renderMapView();
@@ -943,7 +956,18 @@ window.UI = (function () {
     els.suiviSubNav.querySelectorAll("[data-suivitab]").forEach(function (btn) {
       btn.classList.toggle("active", btn.getAttribute("data-suivitab") === tab);
     });
-    if (tab === "proximite") suiviMap.invalidateSize();
+    if (tab === "proximite") {
+      suiviMap.invalidateSize();
+      dessinerTraceSuivi();
+    }
+  }
+
+  // La même trace que la carte de synthèse, en fond discret : elle situe la
+  // position du livreur dans l'ensemble de la tournée sans concurrencer les
+  // marqueurs de distribution. Dessinée à la navigation seulement — la
+  // redessiner à chaque relevé GPS serait du gaspillage.
+  function dessinerTraceSuivi() {
+    Parcours.afficher(suiviMap, { leger: true, recentrer: false });
   }
 
   // ---------------------------------------------------------------------
@@ -1529,6 +1553,7 @@ window.UI = (function () {
       '<hr>' +
       '<label class="switch-row"><input type="checkbox" id="admGeocodage" ' + (s.geocodageActif ? "checked" : "") + '> Activer le géocodage automatique (API adresse gouvernementale)</label>' +
       '<label class="switch-row"><input type="checkbox" id="admScan" ' + (s.scanActif !== false ? "checked" : "") + '> Scan d\'étiquette par la caméra (expérimental)</label>' +
+      '<label class="switch-row"><input type="checkbox" id="admAdressesCarte" ' + (s.afficherAdressesCarte === true ? "checked" : "") + '> Afficher les adresses sur la carte (au zoom rapproché)</label>' +
       '<hr>' +
       '<div class="fieldset-title">Couleurs par commune</div>' +
       '<div id="communeColors">' + communeColorRowsHTML() + '</div>' +
@@ -1599,6 +1624,10 @@ window.UI = (function () {
     document.getElementById("admScan").addEventListener("change", function (e) {
       S.setSetting("scanActif", e.target.checked);
       renderPrep();
+    });
+    document.getElementById("admAdressesCarte").addEventListener("change", function (e) {
+      S.setSetting("afficherAdressesCarte", e.target.checked);
+      Parcours.rafraichirAffichage();
     });
     document.getElementById("admModeSuivi").addEventListener("change", function (e) {
       S.setSetting("modeSuivi", e.target.value);
@@ -1758,10 +1787,11 @@ window.UI = (function () {
         pickSuggestion(actionEl.getAttribute("data-id"), actionEl.getAttribute("data-cible"));
         break;
       case "parcours-recentrer":
-        Parcours.recentrer();
+        Parcours.recentrer(M);
         break;
-      case "parcours-adresses":
-        Parcours.setAfficherAdresses(actionEl.checked);
+      case "parcours-basculer":
+        parcoursDeplie = !parcoursDeplie;
+        renderParcoursPanel(parcoursDernier, null);
         break;
       case "parcours-geocoder":
         geocoderParcours();
