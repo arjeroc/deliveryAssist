@@ -152,29 +152,69 @@ window.Parcours = (function () {
     });
   }
 
+  function faireEtape(membres) {
+    var premier = membres[0].row;
+    var e = {
+      cle: cleRue(premier),
+      rue: premier.rue || "(rue non renseignée)",
+      commune: premier.commune || "",
+      lieuxDits: {},
+      adresses: membres.map(function (m) { return m.row; }),
+      // Place de l'étape : rang de sa première adresse. La médiane serait
+      // trompeuse pour une rue éparpillée dans tout l'ordre de tri — toutes les
+      // rues finiraient au même rang moyen, et l'ordre deviendrait arbitraire.
+      position: Math.min.apply(null, membres.map(function (m) { return m.i; }))
+    };
+    e.adresses.forEach(function (r) { if (r.lieu_dit) e.lieuxDits[r.lieu_dit.trim()] = true; });
+    return e;
+  }
+
+  // Découpage en étapes.
+  //
+  // Se fier aux seules suites consécutives serait piégeux : trier par casier
+  // disperse fréquemment les adresses d'une même rue dans tout l'ordre, et on
+  // obtiendrait alors une étape par adresse — des centaines de repères, soit
+  // exactement le nuage de points qu'on cherche à éviter. On regroupe donc par
+  // rue, et on ne scinde que sur un vrai retour : un écart franc dans l'ordre
+  // de la tournée, pas un simple entrelacement de casier.
+  function decouperEnEtapes(rows) {
+    var parRue = {};
+    var ordre = [];
+    rows.forEach(function (r, i) {
+      var cle = cleRue(r);
+      if (!parRue[cle]) { parRue[cle] = []; ordre.push(cle); }
+      parRue[cle].push({ row: r, i: i });
+    });
+
+    var seuilRetour = Math.max(8, Math.round(rows.length * 0.1));
+    var TAILLE_BLOC_CREDIBLE = 3;
+    var etapes = [];
+    ordre.forEach(function (cle) {
+      var membres = parRue[cle];
+      var blocs = [[membres[0]]];
+      for (var k = 1; k < membres.length; k++) {
+        if (membres[k].i - membres[k - 1].i > seuilRetour) blocs.push([]);
+        blocs[blocs.length - 1].push(membres[k]);
+      }
+      // Un vrai retour dans une rue laisse deux groupes d'adresses consistants.
+      // Des miettes éparpillées signalent au contraire que l'ordre de tri ne
+      // suit pas cette rue : on les recolle en une seule étape.
+      var emiette = blocs.some(function (b) { return b.length < TAILLE_BLOC_CREDIBLE; });
+      if (blocs.length > 1 && emiette) {
+        etapes.push(faireEtape(membres));
+      } else {
+        blocs.forEach(function (b) { etapes.push(faireEtape(b)); });
+      }
+    });
+
+    etapes.sort(function (a, b) { return a.position - b.position; });
+    return etapes;
+  }
+
   function construire() {
     chargerPrecisions();
     var rows = ordonner(S.getRows());
-    var etapes = [];
-    var courante = null;
-
-    rows.forEach(function (r) {
-      var cle = cleRue(r);
-      if (!courante || courante.cle !== cle) {
-        // Rue différente : nouvelle étape. Une rue reparcourue plus loin dans
-        // la tournée donne bien deux étapes distinctes, pas un retour en arrière.
-        courante = {
-          cle: cle,
-          rue: r.rue || "(rue non renseignée)",
-          commune: r.commune || "",
-          lieuxDits: {},
-          adresses: []
-        };
-        etapes.push(courante);
-      }
-      if (r.lieu_dit) courante.lieuxDits[r.lieu_dit.trim()] = true;
-      courante.adresses.push(r);
-    });
+    var etapes = decouperEnEtapes(rows);
 
     etapes.forEach(function (e, i) {
       e.rang = i + 1;
@@ -465,14 +505,19 @@ window.Parcours = (function () {
     points.forEach(function (p, i) {
       var e = p.etapes[0];
       var estDepart = i === 0, estArrivee = i === points.length - 1;
-      var contenu = p.etapes.map(function (x) { return popupEtape(x, total); }).join("<hr>");
+      // Contenu calculé à l'ouverture : le composer d'avance pour chaque repère
+      // reviendrait à construire des centaines de fragments jamais lus.
+      var contenu = function () {
+        return p.etapes.map(function (x) { return popupEtape(x, total); }).join("<hr>");
+      };
 
       if (estDepart || estArrivee) {
         L.marker([p.lat, p.lon], {
           icon: icone(estDepart ? "D" : "A", "pc-borne " + (estDepart ? "pc-depart" : "pc-arrivee"), 30),
           zIndexOffset: 1000
-        }).bindPopup(estDepart ? "<strong>Départ</strong><br>" + contenu : "<strong>Arrivée</strong><br>" + contenu)
-          .addTo(v.calques.communes);
+        }).bindPopup(function () {
+          return "<strong>" + (estDepart ? "Départ" : "Arrivée") + "</strong><br>" + contenu();
+        }).addTo(v.calques.communes);
         return;
       }
 
@@ -491,7 +536,11 @@ window.Parcours = (function () {
     });
   }
 
+  // Construite seulement au premier affichage réel : fabriquer des centaines de
+  // marqueurs que le réglage laisse masqués coûtait cher pour rien.
   function dessinerAdresses(v) {
+    if (v.adressesPretes) return;
+    v.adressesPretes = true;
     v.calques.adresses.clearLayers();
     modele.rows.forEach(function (r) {
       var niveau = niveauDe(r);
@@ -515,8 +564,9 @@ window.Parcours = (function () {
     if (!v || !v.map) return;
     var z = v.map.getZoom();
     basculer(v, v.calques.numeros, !v.leger && z >= ZOOM_NUMEROS);
-    basculer(v, v.calques.adresses,
-      !v.leger && S.getSettings().afficherAdressesCarte === true && z >= ZOOM_ADRESSES);
+    var montrerAdresses = !v.leger && S.getSettings().afficherAdressesCarte === true && z >= ZOOM_ADRESSES;
+    if (montrerAdresses) dessinerAdresses(v);
+    basculer(v, v.calques.adresses, montrerAdresses);
   }
 
   function basculer(v, calque, visible) {
@@ -570,7 +620,7 @@ window.Parcours = (function () {
       // masqueraient les marqueurs de distribution de la Course.
       v.map.addLayer(v.calques.communes);
       dessinerReperes(v, points);
-      dessinerAdresses(v);
+      v.adressesPretes = false; // les pastilles seront construites si on les demande
     }
     appliquerZoom(v);
     if (options.recentrer !== false) recentrer(instance);
