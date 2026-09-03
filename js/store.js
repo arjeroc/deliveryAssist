@@ -27,7 +27,7 @@ window.Store = (function () {
     settings: {
       geocodageActif: true,
       communeColors: {},
-      // Rayons de proximité (mètres) utilisés par la page Suivi tournée —
+      // Rayons de proximité (mètres) utilisés par la page Course —
       // configurables plutôt que codés en dur.
       rayonImmediat: 100,
       rayonProche: 300,

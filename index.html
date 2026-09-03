@@ -19,15 +19,15 @@
   </header>
 
   <nav id="mainTabBar">
-    <button data-mainpage="db" class="active">🗂️ Base de données</button>
+    <button data-mainpage="db" class="active">🗂️ Données</button>
     <button data-mainpage="prep">🚚 Préparation</button>
-    <button data-mainpage="suivi">📍 Suivi</button>
+    <button data-mainpage="suivi">📍 Course</button>
   </nav>
 </div>
 
 <main>
 
-  <!-- ================= PAGE 1 : BASE DE DONNÉES ================= -->
+  <!-- ================= PAGE 1 : DONNÉES ================= -->
   <div class="page active" id="page-db">
 
     <div class="subnav" id="dbSubNav">
@@ -50,10 +50,6 @@
     </div>
 
     <div class="view" id="view-map">
-      <div class="subnav" id="mapSubNav">
-        <button data-mapview="parcours" class="active">🧭 Parcours</button>
-        <button data-mapview="points">📍 Adresses</button>
-      </div>
       <div id="parcoursPanel"></div>
       <div id="mapContainer"></div>
     </div>
@@ -90,7 +86,7 @@
     </div>
   </div>
 
-  <!-- ================= PAGE 3 : SUIVI TOURNÉE ================= -->
+  <!-- ================= PAGE 3 : COURSE ================= -->
   <div class="page" id="page-suivi">
 
     <div class="suivi-progress" id="suiviProgress"></div>

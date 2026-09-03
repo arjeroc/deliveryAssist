@@ -126,7 +126,7 @@ mark{background:#fff2a8;color:inherit;border-radius:3px;padding:0 1px;}
 .commune-summary-name{flex:1;font-weight:700;}
 .commune-summary-figures{color:var(--muted);white-space:nowrap;}
 
-/* --- suivi tournée --- */
+/* --- course (suivi de tournée) --- */
 .suivi-progress{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:10px;}
 .suivi-progress-row{display:flex;justify-content:space-between;padding:5px 0;font-size:14px;}
 .suivi-progress-row.total{font-weight:700;}

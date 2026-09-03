@@ -9,8 +9,8 @@ window.UI = (function () {
 
   var S = window.Store;
   var G = window.Geocode;
-  var M = window.MapView.create();       // carte de la Base de données
-  var suiviMap = window.MapView.create(); // carte du Suivi tournée (instance indépendante)
+  var M = window.MapView.create();       // carte des Données
+  var suiviMap = window.MapView.create(); // carte de la Course (instance indépendante)
 
   var els = {}; // rempli dans init()
   var currentView = "search";
@@ -111,8 +111,8 @@ window.UI = (function () {
   }
 
   // ---------------------------------------------------------------------
-  // Navigation — 3 pages principales (Base de données / Préparation / Suivi),
-  // et à l'intérieur de la Base de données : Recherche / Carte / Fiche.
+  // Navigation — 3 pages principales (Données / Préparation / Course),
+  // et à l'intérieur des Données : Recherche / Carte / Fiche.
   // ---------------------------------------------------------------------
   var currentMainPage = "db";
 
@@ -159,28 +159,14 @@ window.UI = (function () {
   }
 
   // ---------------------------------------------------------------------
-  // Onglet Carte — parcours de tournée reconstruit, ou nuage d'adresses
+  // Onglet Carte — le parcours de tournée reconstruit. Les adresses une à une
+  // ne sont plus une vue séparée : elles s'ajoutent au parcours, au zoom, si
+  // le réglage correspondant est activé.
   // ---------------------------------------------------------------------
-  var mapMode = "parcours";      // 'parcours' | 'points'
   var parcoursDeplie = false;    // résumé replié par défaut
   var parcoursDernier = null;
 
-  function setMapView(mode) {
-    mapMode = mode;
-    els.mapSubNav.querySelectorAll("[data-mapview]").forEach(function (btn) {
-      btn.classList.toggle("active", btn.getAttribute("data-mapview") === mode);
-    });
-    renderMapView();
-  }
-
   function renderMapView() {
-    if (mapMode === "points") {
-      Parcours.effacer(M);
-      els.parcoursPanel.innerHTML = "";
-      M.renderAll(S.getRows());
-      return;
-    }
-    M.renderPoints([], {});   // libère les marqueurs du mode adresses
     renderParcoursPanel(null, "Reconstruction du parcours…");
     Parcours.afficher(M, {
       onSelect: function (id) { openFiche(id); }
@@ -271,7 +257,7 @@ window.UI = (function () {
       toast(bilan.places + " adresse(s) positionnée(s) sur " + bilan.demandes + ".", "ok");
       renderSearch();
       renderMapView();
-      Parcours.effacer(suiviMap); // la trace du Suivi sera refaite à la prochaine visite
+      Parcours.effacer(suiviMap); // la trace de la Course sera refaite à la prochaine visite
     }).catch(function () {
       toast("Géocodage indisponible (pas de réseau ou service hors service).", "err");
       renderMapView();
@@ -790,10 +776,14 @@ window.UI = (function () {
     window.open(url, "_blank");
   }
 
+  // La carte n'affiche plus un marqueur par adresse : on s'y rend en centrant
+  // sur les coordonnées, ce qui fonctionne que les pastilles soient visibles ou non.
   function voirSurCarte(row) {
     if (!S.hasGPS(row)) return;
     showView("map");
-    setTimeout(function () { M.focusRow(row.id); }, 120);
+    setTimeout(function () {
+      M.centerOn(Number(row.latitude), Number(row.longitude), 17);
+    }, 200);
   }
 
   function runGeocode() {
@@ -937,7 +927,7 @@ window.UI = (function () {
   }
 
   // ---------------------------------------------------------------------
-  // Page 3 — Suivi tournée (position actuelle, proximité, avancement)
+  // Page 3 — Course (position actuelle, proximité, avancement)
   // ---------------------------------------------------------------------
   var suiviWatchId = null;
   var suiviUserPos = null;    // { lat, lon, accuracy }
@@ -1558,7 +1548,7 @@ window.UI = (function () {
       '<div class="fieldset-title">Couleurs par commune</div>' +
       '<div id="communeColors">' + communeColorRowsHTML() + '</div>' +
       '<hr>' +
-      '<div class="fieldset-title">Mode de suivi de la tournée</div>' +
+      '<div class="fieldset-title">Mode d\'affichage de la Course</div>' +
       '<div class="field">' +
         '<select id="admModeSuivi">' +
           '<option value="distributions"' + (s.modeSuivi !== "complete" ? " selected" : "") + '>Suivi des distributions (recommandé)</option>' +
@@ -1568,7 +1558,7 @@ window.UI = (function () {
       '<small class="hint">« Suivi des distributions » n\'affiche que les zones ayant des items à distribuer. ' +
       '« Tournée complète » montre aussi les zones de distribution standard, sans item enregistré.</small>' +
       '<hr>' +
-      '<div class="fieldset-title">Rayons de proximité (Suivi tournée)</div>' +
+      '<div class="fieldset-title">Rayons de proximité (Course)</div>' +
       '<div class="radius-settings">' +
         '<div class="field"><label>🔴 Immédiat (mètres)</label><input type="number" min="1" id="admRayonImmediat" value="' + s.rayonImmediat + '"></div>' +
         '<div class="field"><label>🟡 Proche (mètres)</label><input type="number" min="1" id="admRayonProche" value="' + s.rayonProche + '"></div>' +
@@ -1860,7 +1850,6 @@ window.UI = (function () {
     els.emptyState = document.getElementById("emptyState");
     els.fab = document.getElementById("fab");
     els.dbSubNav = document.getElementById("dbSubNav");
-    els.mapSubNav = document.getElementById("mapSubNav");
     els.parcoursPanel = document.getElementById("parcoursPanel");
     els.mainTabBar = document.getElementById("mainTabBar");
     els.adminOverlay = document.getElementById("adminOverlay");
@@ -1892,7 +1881,6 @@ window.UI = (function () {
       if (e.target.closest("[data-mainpage]")) showMainPage(e.target.closest("[data-mainpage]").getAttribute("data-mainpage"));
       if (e.target.closest("[data-prepfilter]")) setPrepFilter(e.target.closest("[data-prepfilter]").getAttribute("data-prepfilter"));
       if (e.target.closest("[data-suivitab]")) setSuiviTab(e.target.closest("[data-suivitab]").getAttribute("data-suivitab"));
-      if (e.target.closest("[data-mapview]")) setMapView(e.target.closest("[data-mapview]").getAttribute("data-mapview"));
     });
 
     // Champs assistés de la fiche : le formulaire étant re-rendu, on délègue.

@@ -343,7 +343,7 @@ window.Parcours = (function () {
   // Dessin
   // ---------------------------------------------------------------------
   // Plusieurs cartes partagent le même modèle de parcours : celle de la Base de
-  // données et celle du Suivi. Chacune garde ses propres calques, sinon la
+  // données et celle de la Course. Chacune garde ses propres calques, sinon la
   // seconde effacerait les couches de la première.
   var vues = [];
   var modele = null;
@@ -435,7 +435,7 @@ window.Parcours = (function () {
     };
   }
 
-  // Dans le Suivi, la trace n'est qu'un repère de fond : elle doit se lire
+  // Dans la Course, la trace n'est qu'un repère de fond : elle doit se lire
   // sans concurrencer les marqueurs de distribution.
   function allegerStyle(style) {
     return {
@@ -567,7 +567,7 @@ window.Parcours = (function () {
     dessinerTrace(v, points, null);
     if (!v.leger) {
       // En mode allégé, seule la trace est dessinée : les repères d'étape
-      // masqueraient les marqueurs de distribution du Suivi.
+      // masqueraient les marqueurs de distribution de la Course.
       v.map.addLayer(v.calques.communes);
       dessinerReperes(v, points);
       dessinerAdresses(v);

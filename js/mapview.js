@@ -1,6 +1,6 @@
 /* ============================================================================
    mapview.js — fine couche au-dessus de Leaflet. Fabrique d'instances : la
-   Base de données et le Suivi de tournée ont chacun leur propre carte
+   les Données et la Course ont chacune leur propre carte
    indépendante (deux conteneurs, deux instances Leaflet).
    ========================================================================== */
 window.MapView = (function () {
@@ -65,40 +65,7 @@ window.MapView = (function () {
 
     function onSelect(cb) { onSelectCallback = cb; }
 
-    function colorFor(row) {
-      return Store.hasGPS(row) ? "#2f6b4f" : "#a1301f";
-    }
-
-    // Rendu "adresses de la base" (Page 1) : coloration par disponibilité GPS.
-    function renderAll(rows, opts) {
-      if (!map) return;
-      opts = opts || {};
-      markersLayer.clearLayers();
-      markersById = {};
-      var withGPS = [];
-      rows.forEach(function (r) {
-        if (!Store.hasGPS(r)) return;
-        var lat = Number(r.latitude), lon = Number(r.longitude);
-        withGPS.push([lat, lon]);
-        var names = Store.namesOf(r).join(" / ") || "(sans nom)";
-        var addr = [r.numero, r.rue].filter(Boolean).join(" ");
-        var marker = L.marker([lat, lon], { icon: markerIcon(colorFor(r)) });
-        marker.bindPopup(
-          "<strong>" + escapeHtml(names) + "</strong><br>" +
-          escapeHtml(addr) + "<br>" +
-          escapeHtml([r.code_postal, r.commune].filter(Boolean).join(" ")) + "<br>" +
-          "<em>" + escapeHtml(Store.casierLabel(r)) + "</em>"
-        );
-        marker.on("click", function () { if (onSelectCallback) onSelectCallback(r.id); });
-        marker.addTo(markersLayer);
-        markersById[r.id] = marker;
-      });
-      if (withGPS.length && opts.fit !== false) {
-        try { map.fitBounds(withGPS, { padding: [30, 30], maxZoom: 15 }); } catch (e) { /* ignore */ }
-      }
-    }
-
-    // Rendu générique de points (Page 3 - Suivi) : chaque point porte sa
+    // Rendu générique de points (Page 3 - Course) : chaque point porte sa
     // propre couleur et son propre contenu de popup, calculés par l'appelant.
     function renderPoints(points, opts) {
       if (!map) return;
@@ -146,27 +113,16 @@ window.MapView = (function () {
       map.setView([lat, lon], zoom || 16);
     }
 
-    function focusRow(id) {
-      var m = markersById[id];
-      if (!m || !map) return false;
-      var ll = m.getLatLng();
-      map.setView(ll, 17);
-      m.openPopup();
-      return true;
-    }
-
     return {
       ensureMap: ensureMap,
       // Accès à l'instance Leaflet brute, pour les calques dessinés par
       // d'autres modules (le parcours de tournée) sans passer par ici.
       getMap: function () { return map; },
       invalidateSize: invalidateSize,
-      renderAll: renderAll,
       renderPoints: renderPoints,
       setUserMarker: setUserMarker,
       drawRadiusCircles: drawRadiusCircles,
       centerOn: centerOn,
-      focusRow: focusRow,
       onSelect: onSelect
     };
   }
