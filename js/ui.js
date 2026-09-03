@@ -1749,6 +1749,9 @@ window.UI = (function () {
       if (kind) { renderFieldSuggest(kind); renderDupNotice(); }
     });
     els.viewFiche.addEventListener("focusin", function (e) {
+      // Appuyer sur une proposition lui donne le focus avant que le clic
+      // n'aboutisse : fermer la liste ici la ferait disparaître sous le doigt.
+      if (e.target.closest && e.target.closest(".suggest")) return;
       var kind = e.target.getAttribute && e.target.getAttribute("data-suggest");
       if (kind) renderFieldSuggest(kind);
       else closeFieldSuggests();

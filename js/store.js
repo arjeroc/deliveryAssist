@@ -65,6 +65,14 @@ window.Store = (function () {
       .trim();
   }
 
+  // Le nom de rue est stocké en majuscules — accents conservés — pour éviter
+  // que « Rue de la République » et « RUE DE LA RÉPUBLIQUE » coexistent dans la
+  // base. La recherche, elle, retire les accents de son côté : elle n'est pas
+  // affectée par ce choix d'écriture.
+  function normaliseRue(v) {
+    return (v === undefined || v === null ? "" : String(v)).trim().toUpperCase();
+  }
+
   function blankRow() {
     return {
       id: uid(), id_tournee: state.idTournee, nom_famille: "", numero: "",
@@ -197,6 +205,7 @@ window.Store = (function () {
         warnings.push(ref + " : code postal \"" + r.code_postal + "\" ne ressemble pas à un code à 5 chiffres.");
       }
       r.stoppub = normalizeBool(r.stoppub);
+      r.rue = normaliseRue(r.rue);
     });
     return { errors: errors, warnings: warnings };
   }
@@ -755,10 +764,19 @@ window.Store = (function () {
     normalize: normalize,
     tokenize: tokenize,
 
-    addRow: function (row) { state.rows.unshift(row); persist(); },
+    addRow: function (row) {
+      row.rue = normaliseRue(row.rue);
+      state.rows.unshift(row);
+      persist();
+    },
     updateRow: function (id, patch) {
       var row = state.rows.find(function (r) { return r.id === id; });
-      if (row) { Object.assign(row, patch); row.date_maj = todayISO(); persist(); }
+      if (row) {
+        Object.assign(row, patch);
+        row.rue = normaliseRue(row.rue);
+        row.date_maj = todayISO();
+        persist();
+      }
       return row;
     },
     deleteRow: function (id) {
