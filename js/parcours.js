@@ -563,7 +563,8 @@ window.Parcours = (function () {
   function appliquerZoom(v) {
     if (!v || !v.map) return;
     var z = v.map.getZoom();
-    basculer(v, v.calques.numeros, !v.leger && z >= ZOOM_NUMEROS);
+    basculer(v, v.calques.numeros,
+      !v.leger && S.getSettings().afficherEtapesCarte !== false && z >= ZOOM_NUMEROS);
     var montrerAdresses = !v.leger && S.getSettings().afficherAdressesCarte === true && z >= ZOOM_ADRESSES;
     if (montrerAdresses) dessinerAdresses(v);
     basculer(v, v.calques.adresses, montrerAdresses);

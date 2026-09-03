@@ -39,7 +39,10 @@ window.Store = (function () {
       scanActif: true,
       // Pastilles d'adresses sur la carte : masquées par défaut, la trace du
       // parcours se lisant beaucoup mieux sans elles.
-      afficherAdressesCarte: false
+      afficherAdressesCarte: false,
+      // Repères d'étapes numérotés : ils portent la progression de la tournée,
+      // mais peuvent être masqués pour ne garder que la trace.
+      afficherEtapesCarte: true
     }
   };
 

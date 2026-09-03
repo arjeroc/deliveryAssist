@@ -1543,6 +1543,7 @@ window.UI = (function () {
       '<hr>' +
       '<label class="switch-row"><input type="checkbox" id="admGeocodage" ' + (s.geocodageActif ? "checked" : "") + '> Activer le géocodage automatique (API adresse gouvernementale)</label>' +
       '<label class="switch-row"><input type="checkbox" id="admScan" ' + (s.scanActif !== false ? "checked" : "") + '> Scan d\'étiquette par la caméra (expérimental)</label>' +
+      '<label class="switch-row"><input type="checkbox" id="admEtapesCarte" ' + (s.afficherEtapesCarte !== false ? "checked" : "") + '> Afficher les repères d\'étapes numérotés sur la carte</label>' +
       '<label class="switch-row"><input type="checkbox" id="admAdressesCarte" ' + (s.afficherAdressesCarte === true ? "checked" : "") + '> Afficher les adresses sur la carte (au zoom rapproché)</label>' +
       '<hr>' +
       '<div class="fieldset-title">Couleurs par commune</div>' +
@@ -1617,6 +1618,10 @@ window.UI = (function () {
     });
     document.getElementById("admAdressesCarte").addEventListener("change", function (e) {
       S.setSetting("afficherAdressesCarte", e.target.checked);
+      Parcours.rafraichirAffichage();
+    });
+    document.getElementById("admEtapesCarte").addEventListener("change", function (e) {
+      S.setSetting("afficherEtapesCarte", e.target.checked);
       Parcours.rafraichirAffichage();
     });
     document.getElementById("admModeSuivi").addEventListener("change", function (e) {
