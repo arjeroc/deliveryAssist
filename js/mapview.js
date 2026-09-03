@@ -157,6 +157,9 @@ window.MapView = (function () {
 
     return {
       ensureMap: ensureMap,
+      // Accès à l'instance Leaflet brute, pour les calques dessinés par
+      // d'autres modules (le parcours de tournée) sans passer par ici.
+      getMap: function () { return map; },
       invalidateSize: invalidateSize,
       renderAll: renderAll,
       renderPoints: renderPoints,

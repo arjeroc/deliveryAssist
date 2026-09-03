@@ -150,9 +150,119 @@ window.UI = (function () {
     if (name === "map") {
       M.ensureMap("mapContainer");
       M.invalidateSize();
-      M.renderAll(S.getRows());
+      renderMapView();
     }
     window.scrollTo(0, 0);
+  }
+
+  // ---------------------------------------------------------------------
+  // Onglet Carte — parcours de tournée reconstruit, ou nuage d'adresses
+  // ---------------------------------------------------------------------
+  var mapMode = "parcours"; // 'parcours' | 'points'
+  var parcoursDernier = null;
+
+  function setMapView(mode) {
+    mapMode = mode;
+    els.mapSubNav.querySelectorAll("[data-mapview]").forEach(function (btn) {
+      btn.classList.toggle("active", btn.getAttribute("data-mapview") === mode);
+    });
+    renderMapView();
+  }
+
+  function renderMapView() {
+    if (mapMode === "points") {
+      Parcours.effacer();
+      els.parcoursPanel.innerHTML = "";
+      M.renderAll(S.getRows());
+      return;
+    }
+    M.renderPoints([], {});   // libère les marqueurs du mode adresses
+    renderParcoursPanel(null, "Reconstruction du parcours…");
+    Parcours.afficher(M, {
+      onSelect: function (id) { openFiche(id); }
+    }).then(function (res) {
+      parcoursDernier = res;
+      renderParcoursPanel(res, null);
+    });
+  }
+
+  function fmtKm(m) {
+    return m >= 1000 ? (m / 1000).toFixed(1) + " km" : Math.round(m) + " m";
+  }
+
+  function renderParcoursPanel(res, message) {
+    if (message) {
+      els.parcoursPanel.innerHTML = '<div class="pc-panel"><div class="muted small">' + escapeHtml(message) + '</div></div>';
+      return;
+    }
+    if (!res || !res.modele.etapes.length) {
+      els.parcoursPanel.innerHTML = '<div class="pc-panel"><div class="muted small">' +
+        'Aucune adresse dans la base : importe un CSV depuis les réglages (⚙️).</div></div>';
+      return;
+    }
+
+    var r = Parcours.resume(res.modele);
+    var p = r.positions;
+    var sansPosition = p.sans;
+
+    // La distance n'est annoncée que si la trace la porte : routière si le
+    // calcul a abouti, à vol d'oiseau sinon, et masquée si trop d'estimations.
+    var distance = "";
+    var metres = Parcours.distanceRoutee(res.trace);
+    if (metres > 0) distance = fmtKm(metres) + " par la route";
+    else if (r.distanceFiable) distance = "~" + fmtKm(r.distanceVolOiseau) + " à vol d'oiseau";
+
+    els.parcoursPanel.innerHTML =
+      '<div class="pc-panel">' +
+        '<div class="pc-stats">' +
+          '<span><strong>' + r.communes + '</strong> commune(s)</span>' +
+          '<span><strong>' + r.rues + '</strong> rue(s)</span>' +
+          '<span><strong>' + r.adresses + '</strong> adresse(s)</span>' +
+          '<span><strong>' + r.etapes + '</strong> étape(s)</span>' +
+          (distance ? '<span><strong>' + escapeHtml(distance) + '</strong></span>' : "") +
+        '</div>' +
+        (r.depart
+          ? '<div class="pc-bornes">' +
+              '<span class="pc-borne-txt"><b>Départ</b> ' + escapeHtml(r.depart.rue) + ' · ' + escapeHtml(r.depart.commune) + '</span>' +
+              '<span class="pc-borne-txt"><b>Arrivée</b> ' + escapeHtml(r.arrivee.rue) + ' · ' + escapeHtml(r.arrivee.commune) + '</span>' +
+            '</div>'
+          : "") +
+        '<div class="pc-legende">' +
+          legendeItem("reel", p.reel + " GPS relevé(s)") +
+          legendeItem("geocode", p.geocode + " géocodée(s)") +
+          legendeItem("approx", p.approx + " approchée(s)") +
+          (r.etapesEstimees ? legendeItem("estime", r.etapesEstimees + " étape(s) estimée(s)") : "") +
+        '</div>' +
+        (sansPosition
+          ? '<div class="pc-alerte">' + sansPosition + ' adresse(s) sans position. ' +
+              '<button class="pc-btn" data-action="parcours-geocoder">Géocoder</button></div>'
+          : "") +
+        '<div class="pc-actions">' +
+          '<button class="pc-btn" data-action="parcours-recentrer">🎯 Recentrer</button>' +
+          '<label class="pc-check"><input type="checkbox" data-action="parcours-adresses"> Adresses (au zoom)</label>' +
+        '</div>' +
+      '</div>';
+  }
+
+  function legendeItem(niveau, texte) {
+    return '<span class="pc-leg"><i style="background:' + Parcours.COULEURS[niveau] + '"></i>' + escapeHtml(texte) + '</span>';
+  }
+
+  function geocoderParcours() {
+    var n = Parcours.aGeocoder().length;
+    if (!n) return;
+    if (!confirmAction("Géocoder " + n + " adresse(s) sans position ? Les coordonnées trouvées seront enregistrées dans la base (pense à exporter avant si besoin).")) return;
+    renderParcoursPanel(null, "Géocodage en cours…");
+    Parcours.geocoderManquants(function (traites, total) {
+      renderParcoursPanel(null, "Géocodage… " + traites + " / " + total);
+    }).then(function (bilan) {
+      toast(bilan.places + " adresse(s) positionnée(s) sur " + bilan.demandes + ".", "ok");
+      renderSearch();
+      renderMapView();
+    }).catch(function () {
+      toast("Géocodage indisponible (pas de réseau ou service hors service).", "err");
+      renderMapView();
+    });
   }
 
   function openAdmin() { els.adminOverlay.classList.add("open"); renderAdmin(); }
@@ -1647,6 +1757,15 @@ window.UI = (function () {
       case "suggest-pick":
         pickSuggestion(actionEl.getAttribute("data-id"), actionEl.getAttribute("data-cible"));
         break;
+      case "parcours-recentrer":
+        Parcours.recentrer();
+        break;
+      case "parcours-adresses":
+        Parcours.setAfficherAdresses(actionEl.checked);
+        break;
+      case "parcours-geocoder":
+        geocoderParcours();
+        break;
       case "scan-open":
         // Le scan ne fait que désigner une adresse : il la cible dans la
         // préparation, où les compteurs sont déjà sous le pouce.
@@ -1711,6 +1830,8 @@ window.UI = (function () {
     els.emptyState = document.getElementById("emptyState");
     els.fab = document.getElementById("fab");
     els.dbSubNav = document.getElementById("dbSubNav");
+    els.mapSubNav = document.getElementById("mapSubNav");
+    els.parcoursPanel = document.getElementById("parcoursPanel");
     els.mainTabBar = document.getElementById("mainTabBar");
     els.adminOverlay = document.getElementById("adminOverlay");
     els.adminBody = document.getElementById("adminBody");
@@ -1741,6 +1862,7 @@ window.UI = (function () {
       if (e.target.closest("[data-mainpage]")) showMainPage(e.target.closest("[data-mainpage]").getAttribute("data-mainpage"));
       if (e.target.closest("[data-prepfilter]")) setPrepFilter(e.target.closest("[data-prepfilter]").getAttribute("data-prepfilter"));
       if (e.target.closest("[data-suivitab]")) setSuiviTab(e.target.closest("[data-suivitab]").getAttribute("data-suivitab"));
+      if (e.target.closest("[data-mapview]")) setMapView(e.target.closest("[data-mapview]").getAttribute("data-mapview"));
     });
 
     // Champs assistés de la fiche : le formulaire étant re-rendu, on délègue.

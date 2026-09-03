@@ -266,12 +266,48 @@ mark{background:#fff2a8;color:inherit;border-radius:3px;padding:0 1px;}
    jamais passer au-dessus du bandeau principal (sticky) lors du défilement. */
 #mapContainer{
   position:relative;z-index:0;
-  height:calc(100vh - 260px);min-height:280px;border-radius:10px;overflow:hidden;border:1px solid var(--line);
+  height:calc(100vh - 400px);min-height:300px;border-radius:10px;overflow:hidden;border:1px solid var(--line);
 }
 #suiviMapContainer{
   position:relative;z-index:0;
   height:280px;border-radius:10px;overflow:hidden;border:1px solid var(--line);margin:10px 0 16px;
 }
+
+/* --- parcours de tournée (onglet Carte) --- */
+.pc-panel{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin-bottom:10px;}
+.pc-stats{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:13px;}
+.pc-bornes{display:flex;flex-direction:column;gap:3px;margin-top:8px;font-size:12.5px;color:var(--muted);}
+.pc-borne-txt b{color:var(--ink);}
+.pc-legende{display:flex;flex-wrap:wrap;gap:6px 12px;margin-top:10px;font-size:11.5px;color:var(--muted);}
+.pc-leg{display:inline-flex;align-items:center;gap:5px;}
+.pc-leg i{width:10px;height:10px;border-radius:50%;display:inline-block;}
+.pc-alerte{margin-top:10px;background:var(--warn-bg);color:var(--warn);border-radius:8px;padding:8px 10px;font-size:12.5px;}
+.pc-actions{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-top:10px;}
+.pc-btn{border:1px solid var(--line);background:#fff;border-radius:8px;padding:7px 11px;font-size:12.5px;font-weight:700;color:var(--accent);cursor:pointer;}
+.pc-btn:active{background:#eef1ec;}
+.pc-check{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;color:var(--muted);}
+
+/* repères posés sur la carte */
+.pc-num{
+  width:24px;height:24px;border-radius:50%;background:#fff;border:2px solid var(--accent);
+  color:var(--ink);font-size:11px;font-weight:800;display:flex;align-items:center;justify-content:center;
+  box-shadow:0 1px 3px rgba(0,0,0,.3);
+}
+.pc-niv-approx{border-color:#f4b400;}
+.pc-niv-estime{border-color:#a0a49c;border-style:dashed;color:var(--muted);}
+.pc-niv-geocode{border-color:#1e6fd9;}
+.pc-borne{
+  width:30px;height:30px;border-radius:50%;color:#fff;font-size:14px;font-weight:800;
+  display:flex;align-items:center;justify-content:center;border:2px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,.4);
+}
+.pc-depart{background:var(--accent);}
+.pc-arrivee{background:var(--err);}
+.pc-commune{width:16px;height:16px;border-radius:50%;background:#fff;border:3px solid var(--ink);box-shadow:0 1px 3px rgba(0,0,0,.3);}
+
+.pc-popup{font-size:13px;line-height:1.45;}
+.pc-popup-meta{color:#6b7268;font-size:12px;}
+.pc-popup-prec{font-size:11px;font-weight:700;}
+.pc-popup-liste{margin-top:6px;padding-top:6px;border-top:1px dashed #dfe2dc;font-size:12px;max-height:150px;overflow-y:auto;}
 
 /* --- fiche --- */
 .fiche-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;}
