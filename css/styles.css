@@ -35,6 +35,9 @@ main{max-width:760px;margin:0 auto;padding:12px;padding-bottom:40px;}
 
 /* --- recherche / liste --- */
 .search-wrap{position:relative;z-index:15;}
+/* le champ actif passe devant les suivants, sinon sa liste déroulante
+   se retrouve masquée par le champ d'en dessous */
+.search-wrap:focus-within{z-index:30;}
 .search-row{display:flex;gap:8px;margin-bottom:6px;}
 .search-row input{flex:1;padding:12px 14px;font-size:16px;border:1px solid var(--line);border-radius:10px;background:#fff;}
 
@@ -160,6 +163,30 @@ mark{background:#fff2a8;color:inherit;border-radius:3px;padding:0 1px;}
 .tournee-card-title{font-size:17px;font-weight:700;}
 .tournee-card-sub{font-size:12.5px;color:var(--muted);margin:2px 0 10px;}
 .tournee-card-figures{font-size:13px;color:var(--muted);margin-bottom:10px;}
+
+/* --- compteurs d'items ---
+   Un item seul : l'icône nue. Plusieurs : pastille sombre et chiffre gras,
+   pour qu'on ne confonde jamais 1 colis avec 3 en un coup d'œil. */
+.item-badge{display:inline-flex;align-items:center;gap:3px;margin-right:8px;vertical-align:middle;}
+.item-badge:last-child{margin-right:0;}
+.item-icon{font-size:15px;line-height:1;}
+.item-badge.multi{background:var(--ink);border-radius:999px;padding:2px 8px 2px 6px;}
+.item-badge.multi .item-count{color:#fff;font-size:14px;font-weight:800;line-height:1;}
+.stepper-value.multi{color:var(--accent);font-size:19px;}
+.addr-motif{font-size:11.5px;color:var(--warn);}
+
+/* zone de distribution standard : rien à valider, seulement s'y rendre */
+.tournee-card.zone-standard{background:#fbfbfa;}
+.zone-standard-line{display:flex;align-items:center;gap:8px;margin-top:4px;}
+.zone-autres{font-size:11.5px;color:var(--muted);margin-top:8px;font-style:italic;}
+.zone-nav{margin-left:auto;flex:0 0 auto;}
+
+/* --- doublon d'adresse détecté à la saisie --- */
+.dup-notice{background:var(--info-bg);border:1px solid #c8ddef;border-radius:10px;padding:10px 12px;margin:4px 0 10px;}
+.dup-text{font-size:13px;color:var(--info);margin-bottom:8px;}
+.dup-btn{width:100%;padding:10px;border-radius:8px;border:1px solid var(--info);background:#fff;color:var(--info);font-weight:700;font-size:13.5px;}
+
+.fiche-add-name{margin:-6px 0 14px;}
 
 /* progression de zone : deux segments, distribué (vert) et abandonné (ambre) */
 .zone-progress{margin-bottom:6px;}

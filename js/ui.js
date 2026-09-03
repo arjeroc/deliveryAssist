@@ -178,7 +178,7 @@ window.UI = (function () {
     var names = S.namesOf(row);
     var title = names.length ? names.map(function (n) { return highlight(n, query); }).join(" / ") : "(sans nom)";
     var addr = [row.numero, row.rue].filter(Boolean).join(" ");
-    var cpCommune = [row.code_postal, row.commune].filter(Boolean).join(" ");
+    var cpCommune = [row.code_postal, S.communeLabelOf(row)].filter(Boolean).join(" ");
     var communeColor = S.getCommuneColor(row.commune);
     return (
       '<div class="card" data-id="' + row.id + '" data-action="open-fiche" style="border-left:5px solid ' + communeColor + ';">' +
@@ -205,7 +205,7 @@ window.UI = (function () {
   function suggestItemHTML(row, query, cible) {
     var adresse = [row.numero, row.rue].filter(Boolean).join(" ") || "(adresse non renseignée)";
     var noms = S.namesOf(row).join(" / ");
-    var contexte = [row.code_postal, row.commune].filter(Boolean).join(" ");
+    var contexte = [row.code_postal, S.communeLabelOf(row)].filter(Boolean).join(" ");
     return '<button type="button" class="suggest-item" data-action="suggest-pick" data-id="' + row.id + '" data-cible="' + cible + '">' +
       '<span class="suggest-main">' + highlight(adresse, query) +
         (noms ? ' <span class="suggest-sep">—</span> ' + highlight(noms, query) : "") + '</span>' +
@@ -290,13 +290,16 @@ window.UI = (function () {
         '<button class="btn-edit" data-action="edit-fiche">✏️ Modifier</button>' +
       '</div>' +
       '<div class="fiche-names">' + chipsStaticHTML(names) + '</div>' +
+      '<div class="quick-actions fiche-add-name">' +
+        '<button data-action="ajouter-destinataire">➕ Ajouter un destinataire ici</button>' +
+      '</div>' +
 
       '<section class="fiche-section">' +
         '<h3>📬 Boîte</h3>' +
         '<div class="kv"><span>Adresse</span><strong>' + (escapeHtml(addr) || '<span class="muted">non renseignée</span>') + '</strong></div>' +
         '<div class="kv"><span>Code postal / Commune</span><strong>' +
           (row.commune ? '<span class="commune-dot" style="background:' + S.getCommuneColor(row.commune) + ';"></span>' : "") +
-          (escapeHtml([row.code_postal, row.commune].filter(Boolean).join(" · ")) || '<span class="muted">non renseigné</span>') + '</strong></div>' +
+          (escapeHtml([row.code_postal, S.communeLabelOf(row)].filter(Boolean).join(" · ")) || '<span class="muted">non renseigné</span>') + '</strong></div>' +
         '<div class="kv"><span>GPS</span><strong>' +
           (S.hasGPS(row) ? escapeHtml(Number(row.latitude).toFixed(5) + ", " + Number(row.longitude).toFixed(5)) : '<span class="muted">manquant</span>') +
         '</strong></div>' +
@@ -343,14 +346,27 @@ window.UI = (function () {
         '<div class="fieldset-title">Noms / destinataires</div>' +
         chipsEditableHTML(names) +
 
-        '<div class="grid2">' +
-          '<div class="field"><label>N°</label><input type="text" data-field="numero" value="' + escapeHtml(row.numero) + '"></div>' +
-          '<div class="field"><label>Rue / lieu-dit</label><input type="text" data-field="rue" value="' + escapeHtml(row.rue) + '"></div>' +
+        // Saisie en cascade : la commune restreint les rues, la rue révèle les
+        // numéros déjà connus. Le livreur retape rarement ce que la base sait déjà.
+        '<div class="field search-wrap">' +
+          '<label>Commune</label>' +
+          '<input type="text" data-field="commune" data-suggest="commune" autocomplete="off" value="' + escapeHtml(row.commune) + '">' +
+          '<div class="suggest" id="suggest-commune"></div>' +
+        '</div>' +
+        '<div class="field search-wrap">' +
+          '<label>Rue / lieu-dit</label>' +
+          '<input type="text" data-field="rue" data-suggest="rue" autocomplete="off" value="' + escapeHtml(row.rue) + '">' +
+          '<div class="suggest" id="suggest-rue"></div>' +
         '</div>' +
         '<div class="grid2">' +
+          '<div class="field search-wrap">' +
+            '<label>N°</label>' +
+            '<input type="text" data-field="numero" data-suggest="numero" autocomplete="off" value="' + escapeHtml(row.numero) + '">' +
+            '<div class="suggest" id="suggest-numero"></div>' +
+          '</div>' +
           '<div class="field"><label>Code postal</label><input type="text" inputmode="numeric" maxlength="5" data-field="code_postal" value="' + escapeHtml(row.code_postal) + '"></div>' +
-          '<div class="field"><label>Commune</label><input type="text" data-field="commune" value="' + escapeHtml(row.commune) + '"></div>' +
         '</div>' +
+        '<div id="dupNotice"></div>' +
 
         '<div class="fieldset-title">GPS</div>' +
         '<div class="grid2">' +
@@ -387,6 +403,7 @@ window.UI = (function () {
                 '<option value=""' + (!row.type_objet ? " selected" : "") + '>—</option>' +
                 '<option value="lettre"' + (row.type_objet === "lettre" ? " selected" : "") + '>Lettre</option>' +
                 '<option value="colis"' + (row.type_objet === "colis" ? " selected" : "") + '>Colis</option>' +
+                '<option value="presse"' + (row.type_objet === "presse" ? " selected" : "") + '>Presse</option>' +
               '</select>' +
             '</div>' +
           '</div>' +
@@ -405,6 +422,128 @@ window.UI = (function () {
           '🚫 Stop Pub — cette adresse n\'accepte pas la publicité' +
         '</label>' +
       '</section>';
+
+    renderDupNotice();
+  }
+
+  // ---------------------------------------------------------------------
+  // Saisie assistée d'adresse — commune, rue puis numéro, alimentés par ce que
+  // la tournée contient déjà. Les mises à jour sont chirurgicales : re-rendre
+  // le formulaire entier ferait perdre le focus à chaque frappe.
+  // ---------------------------------------------------------------------
+  function champValeur(nom) {
+    var el = els.viewFiche.querySelector('[data-field="' + nom + '"]');
+    return el ? el.value : "";
+  }
+
+  function fieldSuggestHTML(kind, valeurs) {
+    return valeurs.map(function (v) {
+      return '<button type="button" class="suggest-item" data-action="field-pick" data-kind="' + kind + '" data-value="' + escapeHtml(v.value) + '">' +
+        '<span class="suggest-main">' + escapeHtml(v.label) + '</span>' +
+        (v.contexte ? '<span class="suggest-context">' + escapeHtml(v.contexte) + '</span>' : "") +
+      '</button>';
+    }).join("");
+  }
+
+  function renderFieldSuggest(kind) {
+    var box = document.getElementById("suggest-" + kind);
+    if (!box) return;
+    // Une seule liste ouverte à la fois : superposées, elles seraient illisibles.
+    closeFieldSuggests();
+    var saisie = champValeur(kind);
+    var valeurs = [];
+
+    if (kind === "commune") {
+      valeurs = S.filterValues(S.listCommunes(), saisie, 8).map(function (c) {
+        return { value: c, label: c, contexte: "" };
+      });
+    } else if (kind === "rue") {
+      valeurs = S.filterValues(S.listRues(champValeur("commune")), saisie, 8).map(function (r) {
+        return { value: r, label: r, contexte: "" };
+      });
+    } else if (kind === "numero") {
+      var rue = champValeur("rue");
+      if (!rue) { box.innerHTML = ""; box.classList.remove("open"); return; }
+      valeurs = S.listAdressesDeRue(rue, champValeur("commune"))
+        .filter(function (r) { return r.id !== currentFicheId && r.numero; })
+        .filter(function (r) { return !S.normalize(saisie) || S.normalize(r.numero).indexOf(S.normalize(saisie)) === 0; })
+        .slice(0, 8)
+        .map(function (r) {
+          return { value: r.numero, label: "N° " + r.numero, contexte: S.namesOf(r).join(" / ") || "(sans nom)" };
+        });
+    }
+
+    if (!valeurs.length) { box.innerHTML = ""; box.classList.remove("open"); return; }
+    box.innerHTML = fieldSuggestHTML(kind, valeurs);
+    box.classList.add("open");
+  }
+
+  function closeFieldSuggests() {
+    ["commune", "rue", "numero"].forEach(function (k) {
+      var box = document.getElementById("suggest-" + k);
+      if (box) { box.innerHTML = ""; box.classList.remove("open"); }
+    });
+  }
+
+  function pickFieldValue(kind, value) {
+    var el = els.viewFiche.querySelector('[data-field="' + kind + '"]');
+    if (!el) return;
+    el.value = value;
+    closeFieldSuggests();
+    // Choisir une commune ou une rue renseigne le code postal quand la base le connaît.
+    if (kind === "commune" || kind === "rue") {
+      var refs = kind === "commune"
+        ? S.getRows().filter(function (r) { return S.normalize(r.commune) === S.normalize(value); })
+        : S.listAdressesDeRue(value, champValeur("commune"));
+      var cp = els.viewFiche.querySelector('[data-field="code_postal"]');
+      var ref = refs.find(function (r) { return r.code_postal; });
+      if (cp && !cp.value && ref) cp.value = ref.code_postal;
+      if (kind === "rue" && ref && !champValeur("commune")) {
+        var communeEl = els.viewFiche.querySelector('[data-field="commune"]');
+        if (communeEl) communeEl.value = ref.commune;
+      }
+    }
+    renderDupNotice();
+  }
+
+  // Prévenir le doublon au moment où il se dessine, pas après coup.
+  function renderDupNotice() {
+    var box = document.getElementById("dupNotice");
+    if (!box) return;
+    var doublon = S.findDoublon({
+      id: currentFicheId, numero: champValeur("numero"),
+      rue: champValeur("rue"), commune: champValeur("commune")
+    });
+    if (!doublon) { box.innerHTML = ""; return; }
+    var noms = S.namesOf(doublon).join(" / ") || "(sans nom)";
+    box.innerHTML =
+      '<div class="dup-notice">' +
+        '<div class="dup-text">Cette adresse existe déjà : <strong>' + escapeHtml(noms) + '</strong></div>' +
+        '<button type="button" class="dup-btn" data-action="fusionner-adresse" data-id="' + doublon.id + '">➕ Ajouter le destinataire à cette adresse</button>' +
+      '</div>';
+  }
+
+  // Verse les noms saisis dans l'adresse existante et abandonne le brouillon :
+  // une boîte aux lettres, une fiche.
+  function fusionnerAvecAdresse(existanteId) {
+    var existante = S.findRow(existanteId);
+    if (!existante) return;
+    readFormIntoDraft();
+    var nouveaux = S.namesOf(editDraft);
+    if (nouveaux.length) {
+      var noms = S.namesOf(existante);
+      nouveaux.forEach(function (n) {
+        if (noms.indexOf(n) === -1) noms.push(n);
+      });
+      var patch = {};
+      S.setNames(patch, noms);
+      S.updateRow(existanteId, patch);
+    }
+    S.deleteRow(currentFicheId);
+    ficheEditing = false;
+    renderSearch();
+    openFiche(existanteId);
+    toast(nouveaux.length ? "Destinataire ajouté à l'adresse existante." : "Adresse déjà présente.", "ok");
   }
 
   function geocodeResultsHTML(results) {
@@ -439,9 +578,21 @@ window.UI = (function () {
     renderFicheEdit(editDraft);
   }
 
+  function estVierge(row) {
+    return !S.namesOf(row).length && !row.rue && !row.numero && !row.commune;
+  }
+
   function cancelEdit() {
     ficheEditing = false;
     var row = S.findRow(currentFicheId);
+    // Une création abandonnée ne doit pas laisser de fiche vide dans la base.
+    if (row && estVierge(row)) {
+      S.deleteRow(row.id);
+      currentFicheId = null;
+      renderSearch();
+      showView("search");
+      return;
+    }
     if (row) renderFicheView(row); else showView("search");
   }
 
@@ -467,6 +618,9 @@ window.UI = (function () {
     var input = document.getElementById("chipInput");
     var val = (input.value || "").trim();
     if (!val) return;
+    // Le formulaire est re-rendu juste après : sans cette relecture, l'adresse
+    // en cours de saisie serait effacée par l'ajout d'un nom.
+    readFormIntoDraft();
     var names = S.namesOf(editDraft);
     names.push(val);
     S.setNames(editDraft, names);
@@ -479,6 +633,7 @@ window.UI = (function () {
     var names = S.namesOf(editDraft);
     var name = names[idx];
     if (!confirmAction('Supprimer le nom "' + name + '" de cette adresse ?')) return;
+    readFormIntoDraft();
     names.splice(idx, 1);
     S.setNames(editDraft, names);
     renderFicheEdit(editDraft);
@@ -563,31 +718,26 @@ window.UI = (function () {
     var names = S.namesOf(row);
     var title = names.length ? names.map(function (n) { return highlight(n, query); }).join(" / ") : "(sans nom)";
     var addr = [row.numero, row.rue].filter(Boolean).join(" ");
+    var contexte = [addr, S.communeLabelOf(row), S.casierLabel(row)].filter(Boolean).join(" · ");
     return (
       '<div class="prep-card" data-id="' + row.id + '" style="border-left:5px solid ' + S.getCommuneColor(row.commune) + ';">' +
         '<div class="prep-card-head">' +
           '<div>' +
             '<div class="card-title">' + title + '</div>' +
-            '<div class="card-line muted">' + escapeHtml([addr, S.casierLabel(row)].filter(Boolean).join(" · ")) + '</div>' +
+            '<div class="card-line muted">' + highlight(contexte, query) + '</div>' +
           '</div>' +
         '</div>' +
-        '<div class="stepper-row">' +
-          '<span class="stepper-label">✉ Lettres</span>' +
-          '<div class="stepper">' +
-            '<button data-action="prep-dec" data-id="' + row.id + '" data-type="lettres">−</button>' +
-            '<span class="stepper-value">' + entry.lettres + '</span>' +
-            '<button data-action="prep-inc" data-id="' + row.id + '" data-type="lettres">+</button>' +
-          '</div>' +
-        '</div>' +
-        '<div class="stepper-row">' +
-          '<span class="stepper-label">📦 Colis</span>' +
-          '<div class="stepper">' +
-            '<button data-action="prep-dec" data-id="' + row.id + '" data-type="colis">−</button>' +
-            '<span class="stepper-value">' + entry.colis + '</span>' +
-            '<button data-action="prep-inc" data-id="' + row.id + '" data-type="colis">+</button>' +
-          '</div>' +
-        '</div>' +
-        ((entry.lettres > 0 || entry.colis > 0)
+        Prep.TYPES.map(function (t) {
+          return '<div class="stepper-row">' +
+            '<span class="stepper-label">' + t.icon + ' ' + escapeHtml(t.label) + '</span>' +
+            '<div class="stepper">' +
+              '<button data-action="prep-dec" data-id="' + row.id + '" data-type="' + t.key + '">−</button>' +
+              '<span class="stepper-value' + (entry[t.key] > 1 ? " multi" : "") + '">' + entry[t.key] + '</span>' +
+              '<button data-action="prep-inc" data-id="' + row.id + '" data-type="' + t.key + '">+</button>' +
+            '</div>' +
+          '</div>';
+        }).join("") +
+        (Prep.countItems(entry) > 0
           ? '<button class="danger prep-remove-btn" data-action="prep-remove" data-id="' + row.id + '">🗑 Supprimer de la tournée</button>'
           : "") +
       '</div>'
@@ -600,13 +750,15 @@ window.UI = (function () {
   }
 
   function communeSummaryHTML(idT) {
-    var byCommune = {}; // commune -> {lettres,colis,adresses}
+    var byCommune = {}; // commune -> compteurs par type + nombre d'adresses
     Prep.listEntries(idT).forEach(function (e) {
       var row = S.findRow(e.addressId);
       var commune = (row && row.commune) ? row.commune.toUpperCase().trim() : "(commune inconnue)";
-      if (!byCommune[commune]) byCommune[commune] = { lettres: 0, colis: 0, adresses: 0 };
-      byCommune[commune].lettres += e.lettres;
-      byCommune[commune].colis += e.colis;
+      if (!byCommune[commune]) {
+        byCommune[commune] = { adresses: 0 };
+        Prep.TYPES.forEach(function (t) { byCommune[commune][t.key] = 0; });
+      }
+      Prep.TYPES.forEach(function (t) { byCommune[commune][t.key] += e[t.key]; });
       byCommune[commune].adresses += 1;
     });
     var communes = Object.keys(byCommune).sort();
@@ -616,7 +768,7 @@ window.UI = (function () {
       return '<div class="commune-summary-row">' +
         '<span class="commune-dot" style="background:' + S.getCommuneColor(c) + ';"></span>' +
         '<span class="commune-summary-name">' + escapeHtml(c) + '</span>' +
-        '<span class="commune-summary-figures">' + t.adresses + ' adr. · ' + t.lettres + ' lettre(s) · ' + t.colis + ' colis</span>' +
+        '<span class="commune-summary-figures">' + t.adresses + ' adr. ' + itemBadgesHTML(t) + '</span>' +
       '</div>';
     }).join("") + '</div>';
   }
@@ -626,8 +778,9 @@ window.UI = (function () {
     var totals = Prep.totals(idT);
     els.prepTotals.innerHTML =
       '<div class="totals-line"><strong>' + totals.adresses + '</strong> adresse(s) · ' +
-      '<strong>' + totals.lettres + '</strong> lettre(s) · ' +
-      '<strong>' + totals.colis + '</strong> colis</div>' +
+      Prep.TYPES.map(function (t) {
+        return '<strong>' + totals[t.key] + '</strong> ' + t.icon;
+      }).join(" · ") + '</div>' +
       '<div class="totals-sub">Tournée « ' + escapeHtml(idT) + ' »</div>';
 
     els.prepCommuneSummary.innerHTML = (prepFilter === "tournee") ? communeSummaryHTML(idT) : "";
@@ -696,11 +849,30 @@ window.UI = (function () {
     '</div>';
   }
 
-  function objetsLabel(entry) {
-    var objets = [];
-    if (entry.lettres > 0) objets.push("✉" + entry.lettres);
-    if (entry.colis > 0) objets.push("📦" + entry.colis);
-    return objets.join(" ");
+  // Un item isolé : l'icône seule suffit. Plusieurs : le nombre devient une
+  // pastille contrastée, parce que confondre 1 colis et 3 colis coûte un
+  // deuxième passage.
+  function itemBadgesHTML(entry) {
+    return Prep.TYPES.map(function (t) {
+      var n = entry[t.key] || 0;
+      if (!n) return "";
+      return '<span class="item-badge' + (n > 1 ? " multi" : "") + '" title="' + escapeHtml(n + " " + t.label) + '">' +
+        '<span class="item-icon">' + t.icon + '</span>' +
+        (n > 1 ? '<span class="item-count">' + n + '</span>' : "") +
+      '</span>';
+    }).join("");
+  }
+
+  // Même information en texte, pour les infobulles de carte.
+  function objetsTexte(entry) {
+    return Prep.TYPES.map(function (t) {
+      var n = entry[t.key] || 0;
+      return n ? n + " " + t.label.toLowerCase() : "";
+    }).filter(Boolean).join(", ") || "aucun item";
+  }
+
+  function ouvrirItineraire(destination) {
+    window.open("https://www.google.com/maps/dir/?api=1&destination=" + encodeURIComponent(destination), "_blank");
   }
 
   // Itinéraire vers l'adresse : coordonnées GPS si on les a, sinon l'adresse
@@ -708,14 +880,24 @@ window.UI = (function () {
   function naviguerVers(addrId) {
     var row = S.findRow(addrId);
     if (!row) return;
-    var dest;
     if (S.hasGPS(row)) {
-      dest = row.latitude + "," + row.longitude;
-    } else {
-      dest = [row.numero, row.rue, row.code_postal, row.commune].filter(Boolean).join(" ");
-      if (!dest) { toast("Cette adresse n'a ni GPS ni libellé exploitable.", "warn"); return; }
+      ouvrirItineraire(row.latitude + "," + row.longitude);
+      return;
     }
-    window.open("https://www.google.com/maps/dir/?api=1&destination=" + encodeURIComponent(dest), "_blank");
+    var dest = [row.numero, row.rue, row.code_postal, row.commune].filter(Boolean).join(" ");
+    if (!dest) { toast("Cette adresse n'a ni GPS ni libellé exploitable.", "warn"); return; }
+    ouvrirItineraire(dest);
+  }
+
+  // Itinéraire vers une zone : on vise sa première adresse localisée, à défaut
+  // le nom de la rue.
+  function naviguerVersZone(key) {
+    var g = findGroup(key);
+    if (!g) return;
+    if (g.ancreId) { naviguerVers(g.ancreId); return; }
+    var dest = [g.rue, g.commune].filter(Boolean).join(" ");
+    if (!dest) { toast("Cette zone n'a pas de libellé exploitable.", "warn"); return; }
+    ouvrirItineraire(dest);
   }
 
   function refreshSuiviAfterChange() {
@@ -801,38 +983,69 @@ window.UI = (function () {
     return (row.rue || "").trim().toUpperCase() + "|" + (row.commune || "").trim().toUpperCase();
   }
 
-  // Regroupe les adresses de la tournée par rue, ordonnées comme la tournée
-  // (ordre_zone puis, à égalité, nom de rue) ; à l'intérieur d'une rue, par ordre_rue puis numéro.
+  function ordreDe(valeur) {
+    return (valeur !== "" && valeur !== undefined && valeur !== null && !isNaN(Number(valeur))) ? Number(valeur) : null;
+  }
+
+  // Regroupe les adresses par rue, ordonnées comme la tournée (ordre_zone puis,
+  // à égalité, nom de rue) ; à l'intérieur d'une rue, par ordre_rue puis numéro.
+  //
+  // En mode "distributions" on ne part que des adresses ayant des items ; en
+  // mode "complete" on parcourt toute la base, ce qui fait apparaître les zones
+  // de distribution standard, sans item enregistré.
   function buildTourneeGroups(idT) {
+    var complet = S.getSettings().modeSuivi === "complete";
+    var rows = complet
+      ? S.getRows()
+      : Prep.listEntries(idT).map(function (e) { return S.findRow(e.addressId); }).filter(Boolean);
+
     var groups = {};
     var order = [];
-    Prep.listEntries(idT).forEach(function (e) {
-      var row = S.findRow(e.addressId);
-      if (!row) return;
+    rows.forEach(function (row) {
+      var entry = Prep.getEntry(idT, row.id);
       var key = tourneeGroupKeyOf(row);
       if (!groups[key]) {
-        groups[key] = { key: key, rue: row.rue || "(rue non renseignée)", commune: row.commune || "", ordreZone: null, items: [] };
+        groups[key] = {
+          key: key, rue: row.rue || "(rue non renseignée)", commune: row.commune || "",
+          lieuxDits: {}, ordreZone: null, items: [], autres: 0
+        };
         order.push(key);
       }
-      groups[key].items.push({ row: row, entry: e });
-      if (groups[key].ordreZone === null && row.ordre_zone !== "" && row.ordre_zone !== undefined && !isNaN(Number(row.ordre_zone))) {
-        groups[key].ordreZone = Number(row.ordre_zone);
-      }
+      var g = groups[key];
+      if (row.lieu_dit) g.lieuxDits[row.lieu_dit.trim()] = true;
+      if (g.ordreZone === null) g.ordreZone = ordreDe(row.ordre_zone);
+      // Dans une zone qui a des items, les adresses sans item resteraient du
+      // bruit : on les compte sans les lister.
+      if (Prep.countItems(entry) > 0) g.items.push({ row: row, entry: entry });
+      else g.autres += 1;
     });
+
     var list = order.map(function (k) { return groups[k]; });
     list.forEach(function (g) {
       g.items.sort(function (a, b) {
-        var oa = (a.row.ordre_rue !== "" && a.row.ordre_rue !== undefined && !isNaN(Number(a.row.ordre_rue))) ? Number(a.row.ordre_rue) : Infinity;
-        var ob = (b.row.ordre_rue !== "" && b.row.ordre_rue !== undefined && !isNaN(Number(b.row.ordre_rue))) ? Number(b.row.ordre_rue) : Infinity;
+        var oa = ordreDe(a.row.ordre_rue), ob = ordreDe(b.row.ordre_rue);
+        if (oa === null) oa = Infinity;
+        if (ob === null) ob = Infinity;
         if (oa !== ob) return oa - ob;
         return (Number(a.row.numero) || 0) - (Number(b.row.numero) || 0);
       });
-      g.lettres = g.items.reduce(function (s, it) { return s + it.entry.lettres; }, 0);
-      g.colis = g.items.reduce(function (s, it) { return s + it.entry.colis; }, 0);
+      Prep.TYPES.forEach(function (t) {
+        g[t.key] = g.items.reduce(function (s, it) { return s + it.entry[t.key]; }, 0);
+      });
       g.distribuees = g.items.filter(function (it) { return it.entry.statut === Prep.STATUTS.DISTRIBUE; }).length;
       g.abandonnees = g.items.filter(function (it) { return it.entry.statut === Prep.STATUTS.ABANDONNE; }).length;
       g.restantes = g.items.length - g.distribuees - g.abandonnees;
       g.terminee = g.restantes === 0;
+      // Zone de distribution standard : aucun item enregistré, donc rien à valider.
+      g.standard = g.items.length === 0;
+      // Le lieu-dit n'étiquette la zone que si toutes ses adresses le partagent.
+      var lieux = Object.keys(g.lieuxDits);
+      g.lieuDit = (lieux.length === 1 && g.autres + g.items.length > 0) ? lieux[0] : "";
+      // Cible d'itinéraire : la première adresse localisée de la zone.
+      var ancre = g.items.concat([]).map(function (it) { return it.row; })
+        .concat(S.getRows().filter(function (r) { return tourneeGroupKeyOf(r) === g.key; }))
+        .find(function (r) { return S.hasGPS(r); });
+      g.ancreId = ancre ? ancre.id : null;
     });
     list.sort(function (a, b) {
       var za = a.ordreZone === null ? Infinity : a.ordreZone;
@@ -852,14 +1065,14 @@ window.UI = (function () {
   function tourneeAddrRowHTML(item) {
     var names = S.namesOf(item.row).join(" / ") || "(sans nom)";
     var label = [item.row.numero, names].filter(Boolean).join(" — ");
-    var meta = objetsLabel(item.entry);
+    var meta = itemBadgesHTML(item.entry);
     if (item.entry.statut === Prep.STATUTS.ABANDONNE) {
-      meta = [meta, "⊘ " + Prep.motifLabel(item.entry.motif)].filter(Boolean).join(" · ");
+      meta += '<span class="addr-motif">⊘ ' + escapeHtml(Prep.motifLabel(item.entry.motif)) + '</span>';
     }
     return '<div class="tournee-addr-row is-' + item.entry.statut + '">' +
       '<div class="tournee-addr-main">' +
         '<div class="tournee-addr-name">' + escapeHtml(label) + '</div>' +
-        '<div class="tournee-addr-meta">' + escapeHtml(meta) + '</div>' +
+        (meta ? '<div class="tournee-addr-meta">' + meta + '</div>' : "") +
       '</div>' +
       addrActionsHTML(item.row.id, item.entry) +
     '</div>';
@@ -884,6 +1097,12 @@ window.UI = (function () {
     }, { passive: true });
   }
 
+  function zoneTotauxHTML(g) {
+    var faux = {};
+    Prep.TYPES.forEach(function (t) { faux[t.key] = g[t.key]; });
+    return itemBadgesHTML(faux);
+  }
+
   function zoneProgressHTML(g) {
     var total = g.items.length;
     var pctDist = total ? (g.distribuees / total) * 100 : 0;
@@ -902,6 +1121,8 @@ window.UI = (function () {
 
   function zoneActionsHTML(g) {
     var key = escapeHtml(g.key);
+    // Zone de distribution standard : rien à valider, seulement s'y rendre.
+    if (g.standard) return "";
     if (g.terminee) {
       return '<div class="zone-actions">' +
         '<button class="zone-btn reopen" data-action="zone-rouvrir" data-key="' + key + '">↺ Rouvrir la zone</button>' +
@@ -919,7 +1140,11 @@ window.UI = (function () {
     clampTourneeIndex(groups);
 
     if (!groups.length) {
-      els.suiviTourneeWrap.innerHTML = '<div class="tournee-empty">Aucune adresse dans la tournée. Ajoute des lettres/colis depuis la page Préparation.</div>';
+      els.suiviTourneeWrap.innerHTML = '<div class="tournee-empty">' +
+        (S.getSettings().modeSuivi === "complete"
+          ? "Aucune adresse dans la base. Importe un CSV depuis les réglages (⚙️)."
+          : "Aucun item à distribuer. Ajoute des lettres, colis ou presse depuis la page Préparation, ou passe en « Tournée complète » dans les réglages.") +
+      '</div>';
       return;
     }
 
@@ -930,15 +1155,21 @@ window.UI = (function () {
         '<div class="tournee-index">Rue ' + (tourneeIndex + 1) + ' / ' + groups.length + '</div>' +
         '<button class="tournee-nav-btn" data-action="tournee-next" ' + (tourneeIndex === groups.length - 1 ? "disabled" : "") + ' aria-label="Rue suivante">›</button>' +
       '</div>' +
-      '<div class="tournee-card" id="tourneeCardSwipe">' +
+      '<div class="tournee-card' + (g.standard ? " zone-standard" : "") + '" id="tourneeCardSwipe">' +
         '<div class="tournee-card-head">' +
           (g.commune ? '<span class="commune-dot" style="background:' + S.getCommuneColor(g.commune) + ';"></span>' : "") +
           '<div class="tournee-card-title">' + escapeHtml(g.rue) + '</div>' +
+          '<button class="addr-btn nav zone-nav" data-action="zone-naviguer" data-key="' + escapeHtml(g.key) + '" aria-label="Se rendre dans cette zone">🧭</button>' +
         '</div>' +
-        (g.commune ? '<div class="tournee-card-sub">' + escapeHtml(g.commune) + '</div>' : "") +
-        '<div class="tournee-card-figures">' + g.lettres + ' lettre(s) · ' + g.colis + ' colis</div>' +
-        zoneProgressHTML(g) +
-        '<div class="tournee-addr-list">' + g.items.map(tourneeAddrRowHTML).join("") + '</div>' +
+        (g.commune ? '<div class="tournee-card-sub">' + escapeHtml(S.communeLabel(g.commune, g.lieuDit)) + '</div>' : "") +
+        (g.standard
+          ? '<div class="zone-standard-line"><span class="tag">Distribution standard</span>' +
+              (g.autres ? '<span class="muted small">' + g.autres + ' adresse(s)</span>' : "") +
+            '</div>'
+          : '<div class="tournee-card-figures">' + zoneTotauxHTML(g) + '</div>' +
+            zoneProgressHTML(g) +
+            '<div class="tournee-addr-list">' + g.items.map(tourneeAddrRowHTML).join("") + '</div>' +
+            (g.autres ? '<div class="zone-autres">+ ' + g.autres + ' adresse(s) en distribution standard</div>' : "")) +
         zoneActionsHTML(g) +
       '</div>';
 
@@ -1031,19 +1262,20 @@ window.UI = (function () {
     var row = item.row, entry = item.entry;
     var names = S.namesOf(row).join(" / ") || "(sans nom)";
     var addr = [row.numero, row.rue].filter(Boolean).join(" ");
-    var objets = [];
-    if (entry.lettres > 0) objets.push("✉ " + entry.lettres + " lettre(s)");
-    if (entry.colis > 0) objets.push("📦 " + entry.colis + " colis");
-    if (entry.statut === Prep.STATUTS.ABANDONNE) objets.push("⊘ " + Prep.motifLabel(entry.motif));
+    var lieu = S.communeLabelOf(row);
+    var objets = itemBadgesHTML(entry);
+    if (entry.statut === Prep.STATUTS.ABANDONNE) {
+      objets += '<span class="addr-motif">⊘ ' + escapeHtml(Prep.motifLabel(entry.motif)) + '</span>';
+    }
     return (
       '<div class="proximity-card is-' + entry.statut + '">' +
         '<div class="proximity-head">' +
           '<div><div class="card-title">' + escapeHtml(names) + '</div>' +
-          '<div class="card-line muted">' + escapeHtml(addr) + '</div></div>' +
+          '<div class="card-line muted">' + escapeHtml([addr, lieu].filter(Boolean).join(" · ")) + '</div></div>' +
           (item.zone ? '<span class="proximity-dist zone-' + item.zone.key + '">' + fmtDistance(item.distance) + '</span>' : '') +
         '</div>' +
         '<div class="proximity-foot">' +
-          '<div class="proximity-objects">' + escapeHtml(objets.join(" · ")) + '</div>' +
+          '<div class="proximity-objects">' + objets + '</div>' +
           addrActionsHTML(row.id, entry) +
         '</div>' +
       '</div>'
@@ -1051,23 +1283,28 @@ window.UI = (function () {
   }
 
   function renderSuiviProgress() {
-    var idT = S.getIdTournee();
-    var p = Prep.progress(idT);
-    var pctDist = p.adressesTotal ? (p.adressesDistribuees / p.adressesTotal) * 100 : 0;
-    var pctAband = p.adressesTotal ? (p.adressesAbandonnees / p.adressesTotal) * 100 : 0;
+    var p = Prep.progress(S.getIdTournee());
+    var a = p.adresses;
+    var pctDist = a.total ? (a.distribuees / a.total) * 100 : 0;
+    var pctAband = a.total ? (a.abandonnees / a.total) * 100 : 0;
+    function ligne(libelle, bag, classe) {
+      var badges = itemBadgesHTML(bag);
+      return '<div class="suivi-progress-row' + (classe === "total" ? " total" : "") + '">' +
+        '<span>' + libelle + '</span>' +
+        '<span class="' + (classe === "total" ? "" : classe) + '">' + (badges || '<span class="muted">—</span>') + '</span>' +
+      '</div>';
+    }
     els.suiviProgress.innerHTML =
-      '<div class="suivi-progress-row total"><span>Tournée</span><span>' + p.lettresTotal + ' lettres — ' + p.colisTotal + ' colis</span></div>' +
-      '<div class="suivi-progress-row"><span>Distribués</span><span class="ok">' + p.lettresDistribuees + ' lettres — ' + p.colisDistribuees + ' colis</span></div>' +
-      (p.adressesAbandonnees
-        ? '<div class="suivi-progress-row"><span>Non distribués</span><span class="skipped">' + p.lettresAbandonnees + ' lettres — ' + p.colisAbandonnees + ' colis</span></div>'
-        : "") +
-      '<div class="suivi-progress-row"><span>Restants</span><span class="pending">' + p.lettresRestantes + ' lettres — ' + p.colisRestantes + ' colis</span></div>' +
+      ligne("Tournée", p.total, "total") +
+      ligne("Distribués", p.distribues, "ok") +
+      (a.abandonnees ? ligne("Non distribués", p.abandonnes, "skipped") : "") +
+      ligne("Restants", p.restants, "pending") +
       '<div class="suivi-progressbar">' +
         '<div class="suivi-progressbar-fill" style="width:' + pctDist + '%;"></div>' +
         '<div class="suivi-progressbar-skip" style="width:' + pctAband + '%;"></div>' +
       '</div>' +
-      '<div class="suivi-progress-addr">' + p.adressesDistribuees + " / " + p.adressesTotal + ' adresses distribuées' +
-        (p.adressesAbandonnees ? ' · ' + p.adressesAbandonnees + ' abandonnée(s)' : "") + '</div>';
+      '<div class="suivi-progress-addr">' + a.distribuees + " / " + a.total + ' adresses distribuées' +
+        (a.abandonnees ? ' · ' + a.abandonnees + ' abandonnée(s)' : "") + '</div>';
   }
 
   function renderSuivi() {
@@ -1106,7 +1343,7 @@ window.UI = (function () {
       var names = S.namesOf(item.row).join(" / ") || "(sans nom)";
       return {
         id: item.row.id, lat: Number(item.row.latitude), lon: Number(item.row.longitude), color: color,
-        popupHtml: "<strong>" + names + "</strong><br>" + (item.entry.lettres || 0) + " lettre(s), " + (item.entry.colis || 0) + " colis"
+        popupHtml: "<strong>" + names + "</strong><br>" + objetsTexte(item.entry)
       };
     });
     suiviMap.renderPoints(points, { fit: !suiviUserPos && points.length > 0 });
@@ -1183,6 +1420,16 @@ window.UI = (function () {
       '<div class="fieldset-title">Couleurs par commune</div>' +
       '<div id="communeColors">' + communeColorRowsHTML() + '</div>' +
       '<hr>' +
+      '<div class="fieldset-title">Mode de suivi de la tournée</div>' +
+      '<div class="field">' +
+        '<select id="admModeSuivi">' +
+          '<option value="distributions"' + (s.modeSuivi !== "complete" ? " selected" : "") + '>Suivi des distributions (recommandé)</option>' +
+          '<option value="complete"' + (s.modeSuivi === "complete" ? " selected" : "") + '>Tournée complète</option>' +
+        '</select>' +
+      '</div>' +
+      '<small class="hint">« Suivi des distributions » n\'affiche que les zones ayant des items à distribuer. ' +
+      '« Tournée complète » montre aussi les zones de distribution standard, sans item enregistré.</small>' +
+      '<hr>' +
       '<div class="fieldset-title">Rayons de proximité (Suivi tournée)</div>' +
       '<div class="radius-settings">' +
         '<div class="field"><label>🔴 Immédiat (mètres)</label><input type="number" min="1" id="admRayonImmediat" value="' + s.rayonImmediat + '"></div>' +
@@ -1235,6 +1482,11 @@ window.UI = (function () {
     });
     document.getElementById("admGeocodage").addEventListener("change", function (e) {
       S.setSetting("geocodageActif", e.target.checked);
+    });
+    document.getElementById("admModeSuivi").addEventListener("change", function (e) {
+      S.setSetting("modeSuivi", e.target.value);
+      tourneeIndex = 0;
+      renderSuivi();
     });
     [["admRayonImmediat", "rayonImmediat"], ["admRayonProche", "rayonProche"], ["admRayonEloigne", "rayonEloigne"]].forEach(function (pair) {
       document.getElementById(pair[0]).addEventListener("change", function (e) {
@@ -1372,6 +1624,9 @@ window.UI = (function () {
       case "zone-rouvrir":
         zoneRouvrir(actionEl.getAttribute("data-key"));
         break;
+      case "zone-naviguer":
+        naviguerVersZone(actionEl.getAttribute("data-key"));
+        break;
       case "motif-pick":
         pickMotif(actionEl.getAttribute("data-motif"));
         break;
@@ -1384,6 +1639,17 @@ window.UI = (function () {
         break;
       case "suggest-pick":
         pickSuggestion(actionEl.getAttribute("data-id"), actionEl.getAttribute("data-cible"));
+        break;
+      case "field-pick":
+        pickFieldValue(actionEl.getAttribute("data-kind"), actionEl.getAttribute("data-value"));
+        break;
+      case "fusionner-adresse":
+        fusionnerAvecAdresse(actionEl.getAttribute("data-id"));
+        break;
+      case "ajouter-destinataire":
+        enterEdit();
+        var chipInput = document.getElementById("chipInput");
+        if (chipInput) chipInput.focus();
         break;
       case "prep-new-tournee":
         if (confirmAction('Vider la préparation de la tournée "' + S.getIdTournee() + '" ? Les adresses de la base ne sont pas affectées, seules les quantités lettres/colis sont effacées.')) {
@@ -1450,12 +1716,23 @@ window.UI = (function () {
 
     document.body.addEventListener("click", function (e) {
       // Un clic ailleurs referme les propositions d'autocomplétion.
-      if (!e.target.closest(".search-wrap")) { closeSuggest("db"); closeSuggest("prep"); }
+      if (!e.target.closest(".search-wrap")) { closeSuggest("db"); closeSuggest("prep"); closeFieldSuggests(); }
       handleClick(e);
       if (e.target.closest("[data-dbview]")) showView(e.target.closest("[data-dbview]").getAttribute("data-dbview"));
       if (e.target.closest("[data-mainpage]")) showMainPage(e.target.closest("[data-mainpage]").getAttribute("data-mainpage"));
       if (e.target.closest("[data-prepfilter]")) setPrepFilter(e.target.closest("[data-prepfilter]").getAttribute("data-prepfilter"));
       if (e.target.closest("[data-suivitab]")) setSuiviTab(e.target.closest("[data-suivitab]").getAttribute("data-suivitab"));
+    });
+
+    // Champs assistés de la fiche : le formulaire étant re-rendu, on délègue.
+    els.viewFiche.addEventListener("input", function (e) {
+      var kind = e.target.getAttribute && e.target.getAttribute("data-suggest");
+      if (kind) { renderFieldSuggest(kind); renderDupNotice(); }
+    });
+    els.viewFiche.addEventListener("focusin", function (e) {
+      var kind = e.target.getAttribute && e.target.getAttribute("data-suggest");
+      if (kind) renderFieldSuggest(kind);
+      else closeFieldSuggests();
     });
 
     els.searchBox.addEventListener("input", function () { renderSearch(); renderSuggest("db"); });

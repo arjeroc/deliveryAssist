@@ -31,7 +31,10 @@ window.Store = (function () {
       // configurables plutôt que codés en dur.
       rayonImmediat: 100,
       rayonProche: 300,
-      rayonEloigne: 1000
+      rayonEloigne: 1000,
+      // 'distributions' : seules les zones ayant des items à distribuer.
+      // 'complete'      : toute la tournée, zones de distribution standard incluses.
+      modeSuivi: "distributions"
     }
   };
 
@@ -102,6 +105,19 @@ window.Store = (function () {
 
   function casierLabel(row) {
     return hasCasier(row) ? ("C" + row.casier_c + "L" + row.casier_l) : "Hors casier";
+  }
+
+  // "LIMOGES (Le Mas de…)" — le lieu-dit reste secondaire, entre parenthèses,
+  // pour situer sans prendre le pas sur la commune.
+  function communeLabel(commune, lieuDit) {
+    commune = (commune || "").trim();
+    lieuDit = (lieuDit || "").trim();
+    if (!commune) return lieuDit;
+    return lieuDit ? commune + " (" + lieuDit + ")" : commune;
+  }
+
+  function communeLabelOf(row) {
+    return communeLabel(row.commune, row.lieu_dit);
   }
 
   // --- position dans la tournée (début / milieu / fin) -----------------------
@@ -365,6 +381,69 @@ window.Store = (function () {
     return Object.keys(set).sort();
   }
 
+  // --- saisie assistée : réutiliser ce que la tournée contient déjà -----------
+
+  // Rues déjà connues, restreintes à une commune quand elle est renseignée.
+  function listRues(commune) {
+    var cible = normalize(commune);
+    var set = {};
+    state.rows.forEach(function (r) {
+      if (!r.rue) return;
+      if (cible && normalize(r.commune) !== cible) return;
+      set[r.rue.trim()] = true;
+    });
+    return Object.keys(set).sort(function (a, b) { return a.localeCompare(b, "fr"); });
+  }
+
+  // Adresses déjà enregistrées dans une rue, pour repérer d'un coup d'œil
+  // qu'un numéro existe (et y rattacher un destinataire plutôt qu'un doublon).
+  function listAdressesDeRue(rue, commune) {
+    var cibleRue = normalize(rue), cibleCommune = normalize(commune);
+    if (!cibleRue) return [];
+    return state.rows
+      .filter(function (r) {
+        if (normalize(r.rue) !== cibleRue) return false;
+        return !cibleCommune || normalize(r.commune) === cibleCommune;
+      })
+      .sort(function (a, b) {
+        var na = parseInt(a.numero, 10), nb = parseInt(b.numero, 10);
+        if (isNaN(na) && isNaN(nb)) return String(a.numero).localeCompare(String(b.numero), "fr");
+        if (isNaN(na)) return 1;
+        if (isNaN(nb)) return -1;
+        if (na !== nb) return na - nb;
+        return String(a.numero).localeCompare(String(b.numero), "fr");
+      });
+  }
+
+  // Même numéro, même rue, même commune : c'est la même boîte aux lettres.
+  function findDoublon(row) {
+    if (!normalize(row.rue) || !normalize(row.numero)) return null;
+    return state.rows.find(function (r) {
+      return r.id !== row.id &&
+             normalize(r.numero) === normalize(row.numero) &&
+             normalize(r.rue) === normalize(row.rue) &&
+             normalize(r.commune) === normalize(row.commune);
+    }) || null;
+  }
+
+  // Filtre une liste de valeurs pour une liste déroulante : insensible à la
+  // casse, aux accents et à la ponctuation, les débuts de mot d'abord.
+  function filterValues(values, query, limit) {
+    var tokens = normalize(query).split(" ").filter(Boolean);
+    var scored = [];
+    values.forEach(function (v) {
+      var n = normalize(v);
+      if (tokens.length && !tokens.every(function (t) { return n.indexOf(t) !== -1; })) return;
+      var prefixe = tokens.length && n.indexOf(tokens[0]) === 0 ? 0 : 1;
+      scored.push({ value: v, rang: prefixe });
+    });
+    scored.sort(function (a, b) {
+      if (a.rang !== b.rang) return a.rang - b.rang;
+      return a.value.localeCompare(b.value, "fr");
+    });
+    return scored.slice(0, limit || 8).map(function (x) { return x.value; });
+  }
+
   // --- recherche ----------------------------------------------------------------
 
   // Mots vides des libellés de voie : ignorés car non discriminants. Ils sont
@@ -548,6 +627,12 @@ window.Store = (function () {
     getCommuneColor: getCommuneColor,
     setCommuneColor: setCommuneColor,
     listCommunes: listCommunes,
+    listRues: listRues,
+    listAdressesDeRue: listAdressesDeRue,
+    findDoublon: findDoublon,
+    filterValues: filterValues,
+    communeLabel: communeLabel,
+    communeLabelOf: communeLabelOf,
 
     validateRows: validateRows,
     importFromCSV: importFromCSV,

@@ -8,8 +8,22 @@ window.Prep = (function () {
   "use strict";
 
   var KEY = "atournee_prep_v1";
-  // { [id_tournee]: { [addressId]: { lettres:n, colis:n, statut:s, motif:'', horodatage:iso } } }
+  // { [id_tournee]: { [addressId]: { lettres:n, colis:n, presse:n, statut:s, motif:'', horodatage:iso } } }
   var state = {};
+
+  // Catégories d'items à distribuer, source unique pour toute l'application :
+  // ajouter une catégorie ici suffit à la faire apparaître partout.
+  var TYPES = [
+    { key: "lettres", icon: "✉️", label: "Lettres" },
+    { key: "colis", icon: "📦", label: "Colis" },
+    { key: "presse", icon: "📰", label: "Presse" }
+  ];
+
+  function typeKeys() { return TYPES.map(function (t) { return t.key; }); }
+
+  function countItems(entry) {
+    return typeKeys().reduce(function (n, k) { return n + (entry[k] || 0); }, 0);
+  }
 
   // Trois états seulement : pas d'état "en cours" à déclarer à la main, il
   // coûterait un geste de plus sur le terrain sans rien apprendre — une zone
@@ -71,21 +85,29 @@ window.Prep = (function () {
   function getEntry(idTournee, addrId) {
     var b = state[idTournee];
     var e = b && b[addrId];
-    return {
-      lettres: (e && e.lettres) || 0,
-      colis: (e && e.colis) || 0,
+    var out = {
       statut: (e && e.statut) || STATUTS.A_FAIRE,
       motif: (e && e.motif) || "",
       horodatage: (e && e.horodatage) || ""
     };
+    // Les tournées enregistrées avant l'ajout d'une catégorie n'ont pas le
+    // champ correspondant : il vaut zéro, aucune migration n'est nécessaire.
+    typeKeys().forEach(function (k) { out[k] = (e && e[k]) || 0; });
+    return out;
+  }
+
+  function blankEntry() {
+    var e = { statut: STATUTS.A_FAIRE, motif: "", horodatage: "" };
+    typeKeys().forEach(function (k) { e[k] = 0; });
+    return e;
   }
 
   function setQty(idTournee, addrId, type, qty) {
     qty = Math.max(0, Math.round(Number(qty) || 0));
     var b = bucket(idTournee);
-    var cur = b[addrId] || { lettres: 0, colis: 0, statut: STATUTS.A_FAIRE, motif: "", horodatage: "" };
+    var cur = b[addrId] || blankEntry();
     cur[type] = qty;
-    if (cur.lettres === 0 && cur.colis === 0) {
+    if (countItems(cur) === 0) {
       delete b[addrId];
     } else {
       b[addrId] = cur;
@@ -147,39 +169,41 @@ window.Prep = (function () {
 
   function totals(idTournee) {
     return listEntries(idTournee).reduce(function (acc, e) {
-      acc.lettres += e.lettres;
-      acc.colis += e.colis;
+      typeKeys().forEach(function (k) { acc[k] += e[k]; });
       acc.adresses += 1;
       return acc;
-    }, { lettres: 0, colis: 0, adresses: 0 });
+    }, (function () {
+      var a = { adresses: 0 };
+      typeKeys().forEach(function (k) { a[k] = 0; });
+      return a;
+    })());
   }
 
-  // Vision d'avancement : tournée totale / distribué / abandonné / restant.
+  // Vision d'avancement, par état : total / distribué / abandonné / restant.
+  // Chaque état porte le compte de toutes les catégories d'items.
   function progress(idTournee) {
+    function bag() {
+      var b = {};
+      typeKeys().forEach(function (k) { b[k] = 0; });
+      return b;
+    }
     var out = {
-      lettresTotal: 0, colisTotal: 0,
-      lettresDistribuees: 0, colisDistribuees: 0,
-      lettresAbandonnees: 0, colisAbandonnees: 0,
-      lettresRestantes: 0, colisRestantes: 0,
-      adressesTotal: 0, adressesDistribuees: 0, adressesAbandonnees: 0, adressesRestantes: 0
+      total: bag(), distribues: bag(), abandonnes: bag(), restants: bag(),
+      adresses: { total: 0, distribuees: 0, abandonnees: 0, restantes: 0 }
     };
     listEntries(idTournee).forEach(function (e) {
-      out.lettresTotal += e.lettres;
-      out.colisTotal += e.colis;
-      out.adressesTotal += 1;
-      if (e.statut === STATUTS.DISTRIBUE) {
-        out.lettresDistribuees += e.lettres;
-        out.colisDistribuees += e.colis;
-        out.adressesDistribuees += 1;
-      } else if (e.statut === STATUTS.ABANDONNE) {
-        out.lettresAbandonnees += e.lettres;
-        out.colisAbandonnees += e.colis;
-        out.adressesAbandonnees += 1;
-      } else {
-        out.lettresRestantes += e.lettres;
-        out.colisRestantes += e.colis;
-        out.adressesRestantes += 1;
-      }
+      var etat = e.statut === STATUTS.DISTRIBUE ? "distribues"
+               : e.statut === STATUTS.ABANDONNE ? "abandonnes"
+               : "restants";
+      var compteur = e.statut === STATUTS.DISTRIBUE ? "distribuees"
+                   : e.statut === STATUTS.ABANDONNE ? "abandonnees"
+                   : "restantes";
+      typeKeys().forEach(function (k) {
+        out.total[k] += e[k];
+        out[etat][k] += e[k];
+      });
+      out.adresses.total += 1;
+      out.adresses[compteur] += 1;
     });
     return out;
   }
@@ -192,7 +216,9 @@ window.Prep = (function () {
   return {
     STATUTS: STATUTS,
     MOTIFS: MOTIFS,
+    TYPES: TYPES,
     motifLabel: motifLabel,
+    countItems: countItems,
 
     load: load,
     getEntry: getEntry,
