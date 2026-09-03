@@ -238,6 +238,7 @@ window.UI = (function () {
   function pickSuggestion(id, cible) {
     closeSuggest(cible);
     if (cible === "prep") {
+      showMainPage("prep");
       // Sur la préparation, on cible l'adresse dans la liste : le livreur
       // enchaîne directement sur les compteurs lettres/colis.
       var row = S.findRow(id);
@@ -776,6 +777,7 @@ window.UI = (function () {
   function renderPrep() {
     var idT = S.getIdTournee();
     var totals = Prep.totals(idT);
+    els.btnScan.style.display = (S.getSettings().scanActif === false) ? "none" : "block";
     els.prepTotals.innerHTML =
       '<div class="totals-line"><strong>' + totals.adresses + '</strong> adresse(s) · ' +
       Prep.TYPES.map(function (t) {
@@ -1416,6 +1418,7 @@ window.UI = (function () {
       '<div id="adminStatus"></div>' +
       '<hr>' +
       '<label class="switch-row"><input type="checkbox" id="admGeocodage" ' + (s.geocodageActif ? "checked" : "") + '> Activer le géocodage automatique (API adresse gouvernementale)</label>' +
+      '<label class="switch-row"><input type="checkbox" id="admScan" ' + (s.scanActif !== false ? "checked" : "") + '> Scan d\'étiquette par la caméra (expérimental)</label>' +
       '<hr>' +
       '<div class="fieldset-title">Couleurs par commune</div>' +
       '<div id="communeColors">' + communeColorRowsHTML() + '</div>' +
@@ -1482,6 +1485,10 @@ window.UI = (function () {
     });
     document.getElementById("admGeocodage").addEventListener("change", function (e) {
       S.setSetting("geocodageActif", e.target.checked);
+    });
+    document.getElementById("admScan").addEventListener("change", function (e) {
+      S.setSetting("scanActif", e.target.checked);
+      renderPrep();
     });
     document.getElementById("admModeSuivi").addEventListener("change", function (e) {
       S.setSetting("modeSuivi", e.target.value);
@@ -1640,6 +1647,17 @@ window.UI = (function () {
       case "suggest-pick":
         pickSuggestion(actionEl.getAttribute("data-id"), actionEl.getAttribute("data-cible"));
         break;
+      case "scan-open":
+        // Le scan ne fait que désigner une adresse : il la cible dans la
+        // préparation, où les compteurs sont déjà sous le pouce.
+        Scan.open({ onPick: function (id) { pickSuggestion(id, "prep"); } });
+        break;
+      case "scan-close":
+        Scan.close();
+        break;
+      case "scan-pick":
+        Scan.pick(actionEl.getAttribute("data-id"));
+        break;
       case "field-pick":
         pickFieldValue(actionEl.getAttribute("data-kind"), actionEl.getAttribute("data-value"));
         break;
@@ -1701,6 +1719,7 @@ window.UI = (function () {
     els.sheetBody = document.getElementById("sheetBody");
 
     els.prepSearchBox = document.getElementById("prepSearchBox");
+    els.btnScan = document.querySelector('[data-action="scan-open"]');
     els.prepList = document.getElementById("prepList");
     els.prepEmptyState = document.getElementById("prepEmptyState");
     els.prepTotals = document.getElementById("prepTotals");

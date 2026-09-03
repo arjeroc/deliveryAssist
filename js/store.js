@@ -34,7 +34,9 @@ window.Store = (function () {
       rayonEloigne: 1000,
       // 'distributions' : seules les zones ayant des items à distribuer.
       // 'complete'      : toute la tournée, zones de distribution standard incluses.
-      modeSuivi: "distributions"
+      modeSuivi: "distributions",
+      // Scan d'étiquette : expérimental, désactivable si la lecture déçoit.
+      scanActif: true
     }
   };
 
@@ -595,6 +597,113 @@ window.Store = (function () {
     return searchScored(query).map(function (x) { return x.row; });
   }
 
+  // --- rapprochement d'un texte scanné --------------------------------------
+
+  // Bruit récurrent des étiquettes postales : civilités, mentions de service,
+  // marquages d'expéditeur. Aucun n'aide à reconnaître une adresse.
+  var BRUIT_SCAN = {
+    M: 1, MR: 1, MME: 1, MLLE: 1, MONSIEUR: 1, MADAME: 1, MADEMOISELLE: 1,
+    LIEU: 1, DIT: 1, CEDEX: 1, TSA: 1, BP: 1, CS: 1, SD: 1, EXP: 1, DEST: 1, POSTE: 1
+  };
+
+  // Confusions classiques d'un OCR sur du texte en capitales.
+  var VERS_LETTRE = { "0": "O", "1": "I", "5": "S", "8": "B", "6": "G", "2": "Z" };
+  var VERS_CHIFFRE = { O: "0", I: "1", L: "1", S: "5", B: "8", G: "6", Z: "2" };
+
+  // Lève l'ambiguïté chiffre/lettre en tranchant selon la nature dominante du
+  // mot : "C0URT0IS" devient COURTOIS, "1626O" redevient 16260. Sans cela, un
+  // nom mal lu cesse de discriminer et l'adresse du voisin fait jeu égal.
+  function deconfondre(token) {
+    var lettres = (token.match(/[A-Z]/g) || []).length;
+    var chiffres = (token.match(/[0-9]/g) || []).length;
+    if (!lettres || !chiffres || lettres === chiffres) return token;
+    var table = lettres > chiffres ? VERS_LETTRE : VERS_CHIFFRE;
+    return token.split("").map(function (c) { return table[c] || c; }).join("");
+  }
+
+  // La déconfusion passe avant le filtrage : sinon "M0NTET" et "B0NNIEURE",
+  // pris pour des références client, seraient jetés au lieu d'être réparés.
+  function tokensUtilesScan(texte) {
+    var vus = {};
+    return contentTokens(tokenize(texte)).map(deconfondre).filter(function (t) {
+      // Un chiffre isolé est gardé : en zone rurale, le « 1 » de
+      // « 1 ROUTE DE CHEZ FOUR » distingue deux voisins.
+      if (t.length < 2 && !/^[0-9]$/.test(t)) return false;
+      if (BRUIT_SCAN[t]) return false;
+      // Numéros de suivi et références client : trop longs pour être un numéro
+      // de rue ou un code postal, ils ne feraient que brouiller le score.
+      if (/^[0-9]+$/.test(t) && t.length > 5) return false;
+      if (/[0-9]/.test(t) && /[A-Z]/.test(t) && t.length > 5) return false;
+      if (vus[t]) return false;
+      vus[t] = 1;
+      return true;
+    });
+  }
+
+  // Note un lot de mots face à une adresse : aucun mot n'est obligatoire,
+  // chacun ajoute des points. L'inverse de search(), donc, car un texte scanné
+  // contient du bruit et souvent une seconde adresse.
+  function noterLot(tokens, entry) {
+    var total = 0, touches = 0;
+    tokens.forEach(function (t) {
+      var s = scoreTokenAgainstEntry(t, entry);
+      if (s > 0) { total += s; touches += 1; }
+    });
+    return { total: total, touches: touches };
+  }
+
+  // Toutes les tranches de 1 à 4 lignes consécutives : une adresse postale
+  // tient sur des lignes voisines, jamais éparpillée dans l'image.
+  function fenetresDeLignes(texte, maxLignes) {
+    var lignes = texte.split(/\r?\n/).map(function (l) { return l.trim(); }).filter(Boolean);
+    var out = [];
+    for (var i = 0; i < lignes.length; i++) {
+      for (var n = 1; n <= maxLignes && i + n <= lignes.length; n++) {
+        out.push(lignes.slice(i, i + n).join(" "));
+      }
+    }
+    return out;
+  }
+
+  // Rapproche un texte scanné des adresses connues, en deux temps.
+  //
+  // 1. Rappel : sur l'ensemble du texte, quelles adresses ont des mots en commun ?
+  // 2. Précision : parmi celles-là, on retient la meilleure fenêtre de lignes
+  //    voisines. Sans cette seconde passe, sur une enveloppe à fenêtre le bloc
+  //    de l'expéditeur et celui du destinataire se mélangent, et une rue
+  //    d'expéditeur qui existe aussi dans la tournée peut l'emporter.
+  function matchTexteLibre(texte, limit) {
+    var tokensGlobaux = tokensUtilesScan(texte);
+    if (!tokensGlobaux.length) return [];
+
+    var presel = [];
+    getIndex().forEach(function (entry) {
+      var s = noterLot(tokensGlobaux, entry);
+      // Un seul mot commun — le code postal, le plus souvent — ne désigne personne.
+      if (s.touches >= 2) presel.push({ entry: entry, brut: s.total });
+    });
+    presel.sort(function (a, b) { return b.brut - a.brut; });
+    presel = presel.slice(0, 30);
+
+    var fenetres = fenetresDeLignes(texte, 4)
+      .map(tokensUtilesScan)
+      .filter(function (t) { return t.length; });
+
+    var out = [];
+    presel.forEach(function (p) {
+      var meilleure = { total: 0, touches: 0 };
+      fenetres.forEach(function (tokens) {
+        var s = noterLot(tokens, p.entry);
+        if (s.touches >= 2 && s.total > meilleure.total) meilleure = s;
+      });
+      if (meilleure.touches >= 2) {
+        out.push({ row: p.entry.row, score: meilleure.total, touches: meilleure.touches });
+      }
+    });
+    out.sort(function (a, b) { return b.score - a.score; });
+    return out.slice(0, limit || 5);
+  }
+
   // --- API publique ---------------------------------------------------------------
 
   return {
@@ -642,6 +751,7 @@ window.Store = (function () {
 
     search: search,
     searchScored: searchScored,
+    matchTexteLibre: matchTexteLibre,
     normalize: normalize,
     tokenize: tokenize,
 

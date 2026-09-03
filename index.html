@@ -72,6 +72,7 @@
     <div class="search-wrap">
       <div class="search-row">
         <input type="text" id="prepSearchBox" placeholder="🔎 Cibler une adresse…" autocomplete="off">
+        <button class="btn-scan" data-action="scan-open" aria-label="Scanner une étiquette">📷</button>
       </div>
       <div class="suggest" id="prepSuggest"></div>
     </div>
@@ -117,6 +118,14 @@
   <div id="adminBody"></div>
 </div>
 
+<div id="scanOverlay">
+  <header class="topbar">
+    <h1>Scanner une étiquette</h1>
+    <button class="icon-btn" data-action="scan-close" aria-label="Fermer">✕</button>
+  </header>
+  <div id="scanBody"></div>
+</div>
+
 <div class="sheet-overlay" id="sheetOverlay" data-action="sheet-close">
   <div class="sheet" id="sheetBody"></div>
 </div>
@@ -128,6 +137,7 @@
 <script src="js/prep.js"></script>
 <script src="js/geocode.js"></script>
 <script src="js/mapview.js"></script>
+<script src="js/scan.js"></script>
 <script src="js/ui.js"></script>
 <script src="js/app.js"></script>
 </body>
