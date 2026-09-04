@@ -73,30 +73,12 @@ window.Parcours = (function () {
   // ---------------------------------------------------------------------
   // Ordre de la tournée
   // ---------------------------------------------------------------------
-  function num(v) {
-    return (v === "" || v === undefined || v === null || isNaN(Number(v))) ? null : Number(v);
-  }
-
-  // L'ordre vient du casier (colonne puis ligne). ordre_zone et ordre_rue
-  // départagent à l'intérieur d'un même casier, l'ordre du fichier en dernier
-  // recours. Les adresses hors casier ferment la marche.
+  // L'ordre appartient aux données : il est défini une seule fois, dans
+  // store.js, à partir de la grille du casier. Le parcours le consomme tel
+  // quel et ne se permet ni de le recalculer ni de le corriger — une carte qui
+  // réordonne sa source finit par mentir sur la tournée.
   function ordonner(rows) {
-    return rows.map(function (r, i) {
-      var c = num(r.casier_c), l = num(r.casier_l);
-      return {
-        row: r, i: i,
-        c: c === null ? Infinity : c,
-        l: l === null ? Infinity : l,
-        z: num(r.ordre_zone) === null ? Infinity : num(r.ordre_zone),
-        o: num(r.ordre_rue) === null ? Infinity : num(r.ordre_rue)
-      };
-    }).sort(function (a, b) {
-      if (a.c !== b.c) return a.c - b.c;
-      if (a.l !== b.l) return a.l - b.l;
-      if (a.z !== b.z) return a.z - b.z;
-      if (a.o !== b.o) return a.o - b.o;
-      return a.i - b.i;
-    }).map(function (x) { return x.row; });
+    return S.rowsOrdreTournee(rows);
   }
 
   // ---------------------------------------------------------------------
@@ -160,10 +142,12 @@ window.Parcours = (function () {
       commune: premier.commune || "",
       lieuxDits: {},
       adresses: membres.map(function (m) { return m.row; }),
-      // Place de l'étape : rang de sa première adresse. La médiane serait
-      // trompeuse pour une rue éparpillée dans tout l'ordre de tri — toutes les
-      // rues finiraient au même rang moyen, et l'ordre deviendrait arbitraire.
-      position: Math.min.apply(null, membres.map(function (m) { return m.i; }))
+      // Place de l'étape : rang de sa première adresse. Les étapes étant
+      // construites dans l'ordre de la tournée, ces rangs sont déjà croissants
+      // — aucun tri ne vient donc redistribuer les étapes après coup.
+      position: membres[0].i,
+      casiers: membres.map(function (m) { return S.casierLabel(m.row); })
+        .filter(function (v, k, t) { return t.indexOf(v) === k; })
     };
     e.adresses.forEach(function (r) { if (r.lieu_dit) e.lieuxDits[r.lieu_dit.trim()] = true; });
     return e;
@@ -171,44 +155,33 @@ window.Parcours = (function () {
 
   // Découpage en étapes.
   //
-  // Se fier aux seules suites consécutives serait piégeux : trier par casier
-  // disperse fréquemment les adresses d'une même rue dans tout l'ordre, et on
-  // obtiendrait alors une étape par adresse — des centaines de repères, soit
-  // exactement le nuage de points qu'on cherche à éviter. On regroupe donc par
-  // rue, et on ne scinde que sur un vrai retour : un écart franc dans l'ordre
-  // de la tournée, pas un simple entrelacement de casier.
+  // Une étape est une suite d'adresses **voisines dans l'ordre de la tournée**
+  // partageant la même rue. Jamais autre chose : regrouper une rue sur toute la
+  // tournée — ce que faisait la version précédente — replaçait ses adresses au
+  // rang de son premier passage, si bien qu'une rue parcourue en C1L4 puis en
+  // C3L3 et C3L4 se lisait comme un seul arrêt en début de tournée. L'ordre du
+  // casier s'en trouvait contredit par la carte.
+  //
+  // Seul recollage autorisé : deux passages de la même rue séparés par une ou
+  // deux adresses (une boîte isolée intercalée). Le recollage reste local, donc
+  // les étapes conservent l'ordre de la tournée.
+  var ECART_RECOLLE = 2;
+
   function decouperEnEtapes(rows) {
-    var parRue = {};
-    var ordre = [];
+    var etapes = [];
     rows.forEach(function (r, i) {
       var cle = cleRue(r);
-      if (!parRue[cle]) { parRue[cle] = []; ordre.push(cle); }
-      parRue[cle].push({ row: r, i: i });
-    });
-
-    var seuilRetour = Math.max(8, Math.round(rows.length * 0.1));
-    var TAILLE_BLOC_CREDIBLE = 3;
-    var etapes = [];
-    ordre.forEach(function (cle) {
-      var membres = parRue[cle];
-      var blocs = [[membres[0]]];
-      for (var k = 1; k < membres.length; k++) {
-        if (membres[k].i - membres[k - 1].i > seuilRetour) blocs.push([]);
-        blocs[blocs.length - 1].push(membres[k]);
+      for (var j = etapes.length - 1; j >= 0; j--) {
+        if (i - etapes[j].fin > ECART_RECOLLE + 1) break;
+        if (etapes[j].cle === cle) {
+          etapes[j].membres.push({ row: r, i: i });
+          etapes[j].fin = i;
+          return;
+        }
       }
-      // Un vrai retour dans une rue laisse deux groupes d'adresses consistants.
-      // Des miettes éparpillées signalent au contraire que l'ordre de tri ne
-      // suit pas cette rue : on les recolle en une seule étape.
-      var emiette = blocs.some(function (b) { return b.length < TAILLE_BLOC_CREDIBLE; });
-      if (blocs.length > 1 && emiette) {
-        etapes.push(faireEtape(membres));
-      } else {
-        blocs.forEach(function (b) { etapes.push(faireEtape(b)); });
-      }
+      etapes.push({ cle: cle, membres: [{ row: r, i: i }], debut: i, fin: i });
     });
-
-    etapes.sort(function (a, b) { return a.position - b.position; });
-    return etapes;
+    return etapes.map(function (e) { return faireEtape(e.membres); });
   }
 
   function construire() {

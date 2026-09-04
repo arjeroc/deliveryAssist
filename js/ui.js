@@ -127,15 +127,13 @@ window.UI = (function () {
     if (name === "prep") renderPrep();
     if (name === "suivi") {
       suiviMap.ensureMap("suiviMapContainer");
-      if (suiviTab === "proximite") {
+      if (suiviTab === "carte") {
         suiviMap.invalidateSize();
         dessinerTraceSuivi();
       }
-      startSuiviWatch();
       renderSuivi();
-    } else {
-      stopSuiviWatch();
     }
+    majSuiviWatch();
     window.scrollTo(0, 0);
   }
 
@@ -168,12 +166,147 @@ window.UI = (function () {
 
   function renderMapView() {
     renderParcoursPanel(null, "Reconstruction du parcours…");
+    renderCasierBrowser();
     Parcours.afficher(M, {
       onSelect: function (id) { openFiche(id); }
     }).then(function (res) {
       parcoursDernier = res;
       renderParcoursPanel(res, null);
+      // La trace vient d'être (re)dessinée : elle a repris la main sur le
+      // cadrage. On redonne la vue à la case de casier consultée.
+      montrerCasierSurCarte();
+      casierFocusId = null;
     });
+  }
+
+  // ---------------------------------------------------------------------
+  // Données → Carte : parcours des cases du casier, dans l'ordre de la grille
+  //
+  // Contrôle de cohérence, pas outil de navigation : on fait défiler les cases
+  // C1L1 → C1L2 → … → C5L5 telles que les données les décrivent, et on vérifie
+  // que les adresses s'y présentent dans l'ordre où elles ont été préparées.
+  // Cette vue ne consulte jamais la carte — c'est la carte qui la suit.
+  // ---------------------------------------------------------------------
+  var casierIndex = 0;
+  var casierFocusId = null;   // adresse à cadrer au prochain affichage, puis oubliée
+  var casierSwipeStartX = null;
+  var casierSwipeStartY = null;
+
+  function casierEtapes() { return S.etapesCasier(); }
+
+  function clampCasierIndex(etapes) {
+    if (!etapes.length) { casierIndex = 0; return; }
+    if (casierIndex < 0) casierIndex = 0;
+    if (casierIndex > etapes.length - 1) casierIndex = etapes.length - 1;
+  }
+
+  // Une ligne d'adresse, telle qu'elle sort du casier. La rue n'est répétée
+  // qu'au changement de rue : une rue qui réapparaît deux fois dans la même
+  // case saute alors aux yeux, ce qui est précisément ce qu'on cherche à voir.
+  function casierLigneHTML(row, precedent) {
+    var memeRue = precedent &&
+      S.normalize(precedent.rue) === S.normalize(row.rue) &&
+      S.normalize(precedent.commune) === S.normalize(row.commune);
+    var noms = S.namesOf(row).join(" / ") || "(sans nom)";
+    var numero = (row.numero || "").trim();
+    return (memeRue ? "" :
+        '<div class="casier-rue">' +
+          '<span class="commune-dot" style="background:' + S.getCommuneColor(row.commune) + ';"></span>' +
+          escapeHtml(row.rue || "(rue non renseignée)") +
+          '<span class="casier-rue-commune">' + escapeHtml(S.communeLabelOf(row)) + '</span>' +
+        '</div>') +
+      '<button class="casier-addr" data-action="open-fiche" data-id="' + escapeHtml(row.id) + '">' +
+        '<span class="casier-num">' + (numero ? escapeHtml(numero) : "—") + '</span>' +
+        '<span class="casier-noms">' + escapeHtml(noms) + '</span>' +
+        (S.hasGPS(row) ? "" : '<span class="casier-flag" title="Adresse sans position GPS">⚠</span>') +
+      '</button>';
+  }
+
+  function renderCasierBrowser() {
+    if (!els.casierBrowser) return;
+    var etapes = casierEtapes();
+    clampCasierIndex(etapes);
+
+    if (!etapes.length) {
+      els.casierBrowser.innerHTML = "";
+      return;
+    }
+
+    var e = etapes[casierIndex];
+    var rues = e.rows.map(function (r) { return S.normalize(r.rue) + "|" + S.normalize(r.commune); })
+      .filter(function (v, i, t) { return t.indexOf(v) === i; }).length;
+    var sansGPS = e.rows.filter(function (r) { return !S.hasGPS(r); }).length;
+
+    var lignes = "";
+    e.rows.forEach(function (r, i) { lignes += casierLigneHTML(r, i ? e.rows[i - 1] : null); });
+
+    els.casierBrowser.innerHTML =
+      '<div class="casier-nav">' +
+        '<button class="tournee-nav-btn" data-action="casier-prev" ' + (casierIndex === 0 ? "disabled" : "") + ' aria-label="Case précédente">‹</button>' +
+        '<div class="tournee-index">' + escapeHtml(e.cle === "hors" ? e.label : "Casier " + e.label) +
+          ' · ' + (casierIndex + 1) + ' / ' + etapes.length + '</div>' +
+        '<button class="tournee-nav-btn" data-action="casier-next" ' + (casierIndex === etapes.length - 1 ? "disabled" : "") + ' aria-label="Case suivante">›</button>' +
+      '</div>' +
+      '<div class="casier-card" id="casierCardSwipe">' +
+        '<div class="casier-head">' +
+          '<div class="casier-label">' + escapeHtml(e.label) + '</div>' +
+          '<div class="casier-meta">' + e.rows.length + ' adresse(s) · ' + rues + ' rue(s)' +
+            (sansGPS ? ' · <span class="casier-flag">⚠ ' + sansGPS + ' sans position</span>' : "") +
+          '</div>' +
+        '</div>' +
+        '<div class="casier-liste">' + lignes + '</div>' +
+      '</div>';
+
+    bindCasierSwipe();
+    montrerCasierSurCarte();
+  }
+
+  // Projection de la case courante sur la carte : des pastilles aux couleurs de
+  // commune, posées par-dessus la trace. Un aller simple — la carte reçoit,
+  // elle ne renvoie rien vers les données.
+  function montrerCasierSurCarte() {
+    if (currentView !== "map") return;
+    var etapes = casierEtapes();
+    if (!etapes.length) return;
+    clampCasierIndex(etapes);
+    var points = etapes[casierIndex].rows.filter(S.hasGPS).map(function (r) {
+      return {
+        id: r.id, lat: Number(r.latitude), lon: Number(r.longitude),
+        color: S.getCommuneColor(r.commune), size: 14,
+        popupHtml: "<strong>" + escapeHtml(S.namesOf(r).join(" / ") || "(sans nom)") + "</strong><br>" +
+          escapeHtml([r.numero, r.rue].filter(Boolean).join(" ")) + "<br>" +
+          escapeHtml(S.communeLabelOf(r)) + "<br><em>" + escapeHtml(S.casierLabel(r)) + "</em>"
+      };
+    });
+    M.renderPoints(points, { fit: false });
+    var cible = casierFocusId && points.filter(function (p) { return p.id === casierFocusId; })[0];
+    if (cible) M.centerOn(cible.lat, cible.lon, 17);
+    else M.fitPoints(points, 16);
+  }
+
+  function bindCasierSwipe() {
+    var el = document.getElementById("casierCardSwipe");
+    if (!el) return;
+    el.addEventListener("touchstart", function (ev) {
+      var t = ev.changedTouches[0];
+      casierSwipeStartX = t.clientX;
+      casierSwipeStartY = t.clientY;
+    }, { passive: true });
+    el.addEventListener("touchend", function (ev) {
+      if (casierSwipeStartX === null) return;
+      var t = ev.changedTouches[0];
+      var dx = t.clientX - casierSwipeStartX;
+      var dy = t.clientY - casierSwipeStartY;
+      casierSwipeStartX = null;
+      if (Math.abs(dx) < 40 || Math.abs(dx) < Math.abs(dy) * 1.5) return;
+      casierNav(dx < 0 ? 1 : -1);
+    }, { passive: true });
+  }
+
+  function casierNav(delta) {
+    casierIndex += delta;
+    casierFocusId = null;
+    renderCasierBrowser();
   }
 
   function fmtKm(m) {
@@ -349,11 +482,16 @@ window.UI = (function () {
     if (cible === "prep") {
       showMainPage("prep");
       // Sur la préparation, on cible l'adresse dans la liste : le livreur
-      // enchaîne directement sur les compteurs lettres/colis.
+      // enchaîne directement sur les compteurs lettres/colis. La barre se vide
+      // pour que la recherche suivante parte d'un champ propre — sans quoi il
+      // faudrait effacer la précédente à la main avant chaque adresse.
       var row = S.findRow(id);
       if (!row) return;
-      els.prepSearchBox.value = [row.numero, row.rue, row.commune].filter(Boolean).join(" ");
+      prepCibleId = id;
+      els.prepSearchBox.value = "";
       renderPrep();
+      var carte = els.prepList.querySelector('.prep-card[data-id="' + id + '"]');
+      if (carte) carte.scrollIntoView({ block: "center" });
     } else {
       openFiche(id);
     }
@@ -778,12 +916,17 @@ window.UI = (function () {
 
   // La carte n'affiche plus un marqueur par adresse : on s'y rend en centrant
   // sur les coordonnées, ce qui fonctionne que les pastilles soient visibles ou non.
+  // « Voir sur la carte » ouvre aussi la case de casier qui contient l'adresse :
+  // on arrive sur la carte avec le contexte de préparation déjà en place, plutôt
+  // que sur un point isolé dont on ignore à quel moment de la tournée il tombe.
   function voirSurCarte(row) {
     if (!S.hasGPS(row)) return;
+    var etapes = casierEtapes();
+    for (var i = 0; i < etapes.length; i++) {
+      if (etapes[i].rows.some(function (r) { return r.id === row.id; })) { casierIndex = i; break; }
+    }
+    casierFocusId = row.id;
     showView("map");
-    setTimeout(function () {
-      M.centerOn(Number(row.latitude), Number(row.longitude), 17);
-    }, 200);
   }
 
   function runGeocode() {
@@ -820,8 +963,18 @@ window.UI = (function () {
   // ---------------------------------------------------------------------
   var prepFilter = "toutes"; // 'toutes' | 'tournee'
 
+  // Adresse désignée par une proposition de recherche ou par le scan.
+  // Elle est mémorisée à part, justement pour que la barre de recherche puisse
+  // être vidée sans perdre l'adresse en cours : sur le terrain, on enchaîne une
+  // adresse après l'autre, et effacer sa recherche à la main à chaque fois est
+  // un geste de trop.
+  var prepCibleId = null;
+
+  function prepViderCible() { prepCibleId = null; }
+
   function setPrepFilter(f) {
     prepFilter = f;
+    prepViderCible();
     els.prepSubNav.querySelectorAll("[data-prepfilter]").forEach(function (btn) {
       btn.classList.toggle("active", btn.getAttribute("data-prepfilter") === f);
     });
@@ -901,8 +1054,17 @@ window.UI = (function () {
     els.prepCommuneSummary.innerHTML = (prepFilter === "tournee") ? communeSummaryHTML(idT) : "";
 
     var q = els.prepSearchBox.value;
+
+    // Une adresse ciblée l'emporte sur la liste tant que rien n'est retapé :
+    // l'écran ne montre qu'elle, ses compteurs sont sous le pouce, et la barre
+    // est déjà libre pour la suivante.
+    var cible = (prepCibleId && !S.normalize(q)) ? S.findRow(prepCibleId) : null;
+    if (prepCibleId && !cible) prepViderCible(); // adresse supprimée entre-temps
+
     var rows;
-    if (prepFilter === "tournee") {
+    if (cible) {
+      rows = [cible];
+    } else if (prepFilter === "tournee") {
       var entries = Prep.listEntries(idT);
       var idsInTournee = {};
       entries.forEach(function (e) { idsInTournee[e.addressId] = true; });
@@ -920,9 +1082,16 @@ window.UI = (function () {
         : "Aucune adresse ne correspond à cette recherche.";
     } else {
       els.prepEmptyState.style.display = "none";
-      els.prepList.innerHTML = rows.map(function (r) {
-        return prepCardHTML(r, Prep.getEntry(idT, r.id), q);
-      }).join("");
+      els.prepList.innerHTML =
+        (cible
+          ? '<div class="prep-cible-bandeau">' +
+              '<span>Adresse ciblée</span>' +
+              '<button class="pc-btn" data-action="prep-cible-effacer">Voir toutes les adresses</button>' +
+            '</div>'
+          : "") +
+        rows.map(function (r) {
+          return prepCardHTML(r, Prep.getEntry(idT, r.id), cible ? "" : q);
+        }).join("");
     }
   }
 
@@ -932,7 +1101,22 @@ window.UI = (function () {
   var suiviWatchId = null;
   var suiviUserPos = null;    // { lat, lon, accuracy }
   var suiviCentered = false;  // ne recentrer la carte qu'une seule fois sur le 1er relevé
-  var suiviTab = "tournee";   // 'tournee' | 'proximite'
+  var suiviCarteCadree = false; // cadrage initial sur l'ensemble des points, une seule fois
+  var suiviTab = "tournee";   // 'tournee' | 'carte'
+  var suiviDernierRelevé = 0; // horodatage du dernier rendu déclenché par le GPS
+
+  // Le GPS est le poste de consommation le plus lourd d'un téléphone en
+  // tournée. Il ne tourne donc que pendant que la carte est réellement
+  // regardée : changer d'onglet, quitter la Course ou passer l'application en
+  // arrière-plan l'arrête. Voir startSuiviWatch/stopSuiviWatch.
+  function carteOuverte() {
+    return currentMainPage === "suivi" && suiviTab === "carte" && !document.hidden;
+  }
+
+  function majSuiviWatch() {
+    if (carteOuverte()) startSuiviWatch();
+    else stopSuiviWatch();
+  }
 
   function suiviGeoStatusHTML(text, kind) {
     return '<span class="' + (kind || "") + '">' + escapeHtml(text) + '</span>';
@@ -940,16 +1124,19 @@ window.UI = (function () {
 
   function setSuiviTab(tab) {
     suiviTab = tab;
-    ["tournee", "proximite"].forEach(function (t) {
+    ["tournee", "carte"].forEach(function (t) {
       document.getElementById("suivi-view-" + t).classList.toggle("active", t === tab);
     });
     els.suiviSubNav.querySelectorAll("[data-suivitab]").forEach(function (btn) {
       btn.classList.toggle("active", btn.getAttribute("data-suivitab") === tab);
     });
-    if (tab === "proximite") {
-      suiviMap.invalidateSize();
+    if (tab === "carte") {
       dessinerTraceSuivi();
+      // Le conteneur vient seulement d'être démasqué : on attend qu'il ait
+      // repris ses dimensions avant de cadrer, sinon Leaflet cadre dans le vide.
+      suiviMap.invalidateSize(renderSuiviCarte);
     }
+    majSuiviWatch();
   }
 
   // La même trace que la carte de synthèse, en fond discret : elle situe la
@@ -975,16 +1162,23 @@ window.UI = (function () {
     '</div>';
   }
 
-  // Un item isolé : l'icône seule suffit. Plusieurs : le nombre devient une
-  // pastille contrastée, parce que confondre 1 colis et 3 colis coûte un
-  // deuxième passage.
-  function itemBadgesHTML(entry) {
+  // Deux niveaux de lecture, jamais le même poids graphique :
+  //
+  //   zone    → combien d'adresses, où en est la zone  → pastille pleine
+  //   adresse → quels objets, en quelle quantité       → « ×3 » discret
+  //
+  // Le « 3 » de trois colis et le « 3 » de trois adresses ne veulent pas dire
+  // la même chose ; leur donner la même pastille noire les faisait confondre.
+  // Le nombre reste visible dès qu'il dépasse 1 — c'est ce qui compte — mais
+  // il ne réclame plus l'attention réservée au niveau supérieur.
+  function itemBadgesHTML(entry, discret) {
     return Prep.TYPES.map(function (t) {
       var n = entry[t.key] || 0;
       if (!n) return "";
-      return '<span class="item-badge' + (n > 1 ? " multi" : "") + '" title="' + escapeHtml(n + " " + t.label) + '">' +
+      var classe = "item-badge" + (discret ? " discret" : "") + (n > 1 && !discret ? " multi" : "");
+      return '<span class="' + classe + '" title="' + escapeHtml(n + " " + t.label) + '">' +
         '<span class="item-icon">' + t.icon + '</span>' +
-        (n > 1 ? '<span class="item-count">' + n + '</span>' : "") +
+        (n > 1 ? '<span class="item-count">' + (discret ? "×" : "") + n + '</span>' : "") +
       '</span>';
     }).join("");
   }
@@ -1029,7 +1223,7 @@ window.UI = (function () {
   function refreshSuiviAfterChange() {
     renderSuiviProgress();
     renderSuiviTournee();
-    renderSuiviProximite();
+    renderSuiviCarte();
   }
 
   function applyStatut(addrIds, statut, motif, message) {
@@ -1191,7 +1385,7 @@ window.UI = (function () {
   function tourneeAddrRowHTML(item) {
     var names = S.namesOf(item.row).join(" / ") || "(sans nom)";
     var label = [item.row.numero, names].filter(Boolean).join(" — ");
-    var meta = itemBadgesHTML(item.entry);
+    var meta = itemBadgesHTML(item.entry, true);
     if (item.entry.statut === Prep.STATUTS.ABANDONNE) {
       meta += '<span class="addr-motif">⊘ ' + escapeHtml(Prep.motifLabel(item.entry.motif)) + '</span>';
     }
@@ -1345,24 +1539,42 @@ window.UI = (function () {
     applyStatut(ids, Prep.STATUTS.A_FAIRE, "", "Zone rouverte.");
   }
 
+  // Un relevé n'entraîne un nouveau rendu que s'il apprend quelque chose : le
+  // GPS d'un piéton renvoie plusieurs points par seconde, dont l'essentiel est
+  // du bruit à l'échelle d'une boîte aux lettres. En dessous de ces seuils, la
+  // position est mémorisée sans redessiner la carte ni recalculer les distances.
+  var MAJ_MIN_MS = 4000;
+  var MAJ_MIN_M = 12;
+
   function startSuiviWatch() {
     if (!navigator.geolocation) {
       els.suiviGeoStatus.innerHTML = suiviGeoStatusHTML("Géolocalisation non disponible sur cet appareil.", "tag-warn");
       return;
     }
     if (suiviWatchId !== null) return;
-    els.suiviGeoStatus.innerHTML = suiviGeoStatusHTML("Recherche de la position…");
+    if (!suiviUserPos) els.suiviGeoStatus.innerHTML = suiviGeoStatusHTML("Recherche de la position…");
     suiviWatchId = navigator.geolocation.watchPosition(function (pos) {
-      suiviUserPos = { lat: pos.coords.latitude, lon: pos.coords.longitude, accuracy: pos.coords.accuracy };
+      var suivante = { lat: pos.coords.latitude, lon: pos.coords.longitude, accuracy: pos.coords.accuracy };
+      var maintenant = Date.now();
+      var bouge = !suiviUserPos ||
+        MapView.distanceMeters(suiviUserPos.lat, suiviUserPos.lon, suivante.lat, suivante.lon) >= MAJ_MIN_M;
+      var premier = !suiviUserPos;
+      suiviUserPos = suivante;
       els.suiviGeoStatus.innerHTML = suiviGeoStatusHTML("📡 Position à jour (précision ~" + Math.round(pos.coords.accuracy || 0) + " m)");
       if (!suiviCentered) {
         suiviMap.centerOn(suiviUserPos.lat, suiviUserPos.lon, 15);
         suiviCentered = true;
       }
+      if (!premier && !bouge && maintenant - suiviDernierRelevé < MAJ_MIN_MS) {
+        // Immobile : on repositionne le seul marqueur, sans refaire l'écran.
+        suiviMap.setUserMarker(suiviUserPos.lat, suiviUserPos.lon, suiviUserPos.accuracy);
+        return;
+      }
+      suiviDernierRelevé = maintenant;
       renderSuivi();
     }, function (err) {
       els.suiviGeoStatus.innerHTML = suiviGeoStatusHTML("Position indisponible (" + err.message + ").", "tag-warn");
-    }, { enableHighAccuracy: true, maximumAge: 8000, timeout: 15000 });
+    }, { enableHighAccuracy: true, maximumAge: 10000, timeout: 20000 });
   }
 
   function stopSuiviWatch() {
@@ -1389,7 +1601,7 @@ window.UI = (function () {
     var names = S.namesOf(row).join(" / ") || "(sans nom)";
     var addr = [row.numero, row.rue].filter(Boolean).join(" ");
     var lieu = S.communeLabelOf(row);
-    var objets = itemBadgesHTML(entry);
+    var objets = itemBadgesHTML(entry, true);
     if (entry.statut === Prep.STATUTS.ABANDONNE) {
       objets += '<span class="addr-motif">⊘ ' + escapeHtml(Prep.motifLabel(entry.motif)) + '</span>';
     }
@@ -1408,73 +1620,105 @@ window.UI = (function () {
     );
   }
 
+  // Le résumé prend la place d'un tiers d'écran pour trois nombres. La barre,
+  // elle, dit l'essentiel en 8 pixels de haut : elle reste toujours visible,
+  // les compteurs se replient. Barre et compteurs partagent le même code
+  // couleur — vert distribué, rouge non distribué, gris restant — pour que
+  // déplier ne soit qu'un agrandissement de ce qu'on lisait déjà.
+  var suiviResumeDeplie = false;
+
   function renderSuiviProgress() {
     var p = Prep.progress(S.getIdTournee());
     var a = p.adresses;
     var pctDist = a.total ? (a.distribuees / a.total) * 100 : 0;
     var pctAband = a.total ? (a.abandonnees / a.total) * 100 : 0;
-    function ligne(libelle, bag, classe) {
-      var badges = itemBadgesHTML(bag);
-      return '<div class="suivi-progress-row' + (classe === "total" ? " total" : "") + '">' +
-        '<span>' + libelle + '</span>' +
-        '<span class="' + (classe === "total" ? "" : classe) + '">' + (badges || '<span class="muted">—</span>') + '</span>' +
+
+    function ligne(libelle, n, bag, classe) {
+      return '<div class="suivi-resume-row">' +
+        '<span class="suivi-resume-puce ' + classe + '"></span>' +
+        '<span class="suivi-resume-label">' + libelle + '</span>' +
+        '<span class="suivi-resume-objets">' + (itemBadgesHTML(bag, true) || '<span class="muted">—</span>') + '</span>' +
+        '<span class="suivi-resume-n ' + classe + '">' + n + '</span>' +
       '</div>';
     }
+
     els.suiviProgress.innerHTML =
-      ligne("Tournée", p.total, "total") +
-      ligne("Distribués", p.distribues, "ok") +
-      (a.abandonnees ? ligne("Non distribués", p.abandonnes, "skipped") : "") +
-      ligne("Restants", p.restants, "pending") +
       '<div class="suivi-progressbar">' +
         '<div class="suivi-progressbar-fill" style="width:' + pctDist + '%;"></div>' +
         '<div class="suivi-progressbar-skip" style="width:' + pctAband + '%;"></div>' +
       '</div>' +
-      '<div class="suivi-progress-addr">' + a.distribuees + " / " + a.total + ' adresses distribuées' +
-        (a.abandonnees ? ' · ' + a.abandonnees + ' abandonnée(s)' : "") + '</div>';
+      '<button class="suivi-resume-toggle" data-action="suivi-resume-basculer" aria-expanded="' + suiviResumeDeplie + '">' +
+        '<span class="pc-chevron">' + (suiviResumeDeplie ? "▾" : "▸") + '</span>' +
+        '<span class="suivi-resume-titre"><strong>' + a.distribuees + '</strong> / ' + a.total + ' adresses distribuées</span>' +
+        (a.abandonnees ? '<span class="suivi-resume-aband">' + a.abandonnees + ' non distribuée(s)</span>' : "") +
+      '</button>' +
+      (suiviResumeDeplie
+        ? '<div class="suivi-resume-detail">' +
+            ligne("Distribués", a.distribuees, p.distribues, "est-ok") +
+            ligne("Non distribués", a.abandonnees, p.abandonnes, "est-ko") +
+            ligne("Restants", a.restantes, p.restants, "est-reste") +
+          '</div>'
+        : "");
   }
 
   function renderSuivi() {
     renderSuiviProgress();
     renderSuiviTournee();
-    renderSuiviProximite();
+    renderSuiviCarte();
   }
 
-  function renderSuiviProximite() {
+  // Carte opérationnelle de la Course.
+  //
+  // Deux principes : la carte montre *tous* les points à distribuer, quelle que
+  // soit la distance — sans quoi on ne voit pas comment la tournée se répartit —
+  // et chaque pastille porte la couleur de sa commune, rien d'autre. L'état de
+  // distribution ne change que l'intensité : plein pour ce qui reste, effacé
+  // pour ce qui est fait. La liste en dessous, elle, garde son filtre par rayon :
+  // c'est elle qui répond à « qu'est-ce qui est à portée de main ».
+  function renderSuiviCarte() {
     var idT = S.getIdTournee();
     var entries = Prep.listEntries(idT);
-    var withGPS = [], withoutGPS = 0, horsZone = 0;
+    var tous = [], aProximite = [], withoutGPS = 0, horsZone = 0;
 
     entries.forEach(function (e) {
       var row = S.findRow(e.addressId);
       if (!row) return;
       if (!S.hasGPS(row)) { withoutGPS++; return; }
       var item = { row: row, entry: e };
-      if (suiviUserPos) {
-        item.distance = MapView.distanceMeters(suiviUserPos.lat, suiviUserPos.lon, Number(row.latitude), Number(row.longitude));
-        item.zone = zoneFor(item.distance);
-        if (!item.zone) { horsZone++; return; }
-      }
-      withGPS.push(item);
+      tous.push(item);
+      if (!suiviUserPos) return;
+      item.distance = MapView.distanceMeters(suiviUserPos.lat, suiviUserPos.lon, Number(row.latitude), Number(row.longitude));
+      item.zone = zoneFor(item.distance);
+      if (item.zone) aProximite.push(item);
+      else horsZone++;
     });
-
-    if (suiviUserPos) withGPS.sort(function (a, b) { return a.distance - b.distance; });
+    aProximite.sort(function (a, b) { return a.distance - b.distance; });
 
     // --- carte ---
     suiviMap.ensureMap("suiviMapContainer");
-    var points = withGPS.map(function (item) {
-      var color = "#6b7268";
-      if (item.entry.statut === Prep.STATUTS.DISTRIBUE) color = "#2f6b4f";
-      else if (item.entry.statut === Prep.STATUTS.ABANDONNE) color = "#a15c00";
-      else if (item.zone) color = item.zone.color;
-      var names = S.namesOf(item.row).join(" / ") || "(sans nom)";
+    var points = tous.map(function (item) {
+      var traite = item.entry.statut !== Prep.STATUTS.A_FAIRE;
       return {
-        id: item.row.id, lat: Number(item.row.latitude), lon: Number(item.row.longitude), color: color,
-        popupHtml: "<strong>" + names + "</strong><br>" + objetsTexte(item.entry)
+        id: item.row.id,
+        lat: Number(item.row.latitude), lon: Number(item.row.longitude),
+        color: S.getCommuneColor(item.row.commune),
+        size: traite ? 11 : 15,
+        creux: item.entry.statut === Prep.STATUTS.DISTRIBUE,
+        opacity: traite ? 0.5 : 1,
+        popupHtml: "<strong>" + escapeHtml(S.namesOf(item.row).join(" / ") || "(sans nom)") + "</strong><br>" +
+          escapeHtml([item.row.numero, item.row.rue].filter(Boolean).join(" ")) + "<br>" +
+          escapeHtml(S.communeLabelOf(item.row)) + "<br>" + escapeHtml(objetsTexte(item.entry))
       };
     });
-    suiviMap.renderPoints(points, { fit: !suiviUserPos && points.length > 0 });
+    // Cadrage initial sur l'ensemble de la tournée, tant qu'aucune position
+    // n'est connue — et seulement quand la carte est réellement à l'écran :
+    // un conteneur masqué n'a pas de dimensions, donc pas de cadrage possible.
+    var carteVisible = suiviTab === "carte" && els.suiviMapContainer.offsetHeight > 0;
+    var cadrer = carteVisible && !suiviCarteCadree && !suiviUserPos && points.length > 0;
+    if (cadrer) suiviCarteCadree = true;
+    suiviMap.renderPoints(points, { fit: cadrer });
     if (suiviUserPos) {
-      suiviMap.setUserMarker(suiviUserPos.lat, suiviUserPos.lon);
+      suiviMap.setUserMarker(suiviUserPos.lat, suiviUserPos.lon, suiviUserPos.accuracy);
       var s = S.getSettings();
       suiviMap.drawRadiusCircles(suiviUserPos.lat, suiviUserPos.lon, [
         { meters: s.rayonImmediat, color: "#e63946" },
@@ -1496,7 +1740,7 @@ window.UI = (function () {
       els.suiviEmptyState.textContent = "En attente de ta position GPS pour calculer les distances…";
       return;
     }
-    if (!withGPS.length) {
+    if (!aProximite.length) {
       els.suiviProximityList.innerHTML = "";
       els.suiviEmptyState.style.display = "block";
       els.suiviEmptyState.textContent = "Aucune adresse à proximité pour l'instant" +
@@ -1512,7 +1756,7 @@ window.UI = (function () {
         (withoutGPS ? withoutGPS + " adresse(s) sans coordonnées GPS." : "") +
       '</div>';
     }
-    els.suiviProximityList.innerHTML = withGPS.map(proximityCardHTML).join("") + note;
+    els.suiviProximityList.innerHTML = aProximite.map(proximityCardHTML).join("") + note;
   }
 
   // ---------------------------------------------------------------------
@@ -1589,6 +1833,7 @@ window.UI = (function () {
       refreshHeader();
       renderPrep();
       suiviCentered = false;
+      suiviCarteCadree = false;
       tourneeIndex = 0;
       renderSuivi();
     });
@@ -1604,6 +1849,7 @@ window.UI = (function () {
         if (res.errors.length) msg += " " + res.errors.length + " erreur(s).";
         if (res.warnings.length) msg += " " + res.warnings.length + " avertissement(s).";
         showAdminStatus(res.errors.length ? "err" : (res.warnings.length ? "warn" : "ok"), msg);
+        casierIndex = 0;
         renderSearch();
       };
       reader.readAsText(file, "UTF-8");
@@ -1709,12 +1955,14 @@ window.UI = (function () {
         if (S.getRows().length && !confirmAction("Remplacer les données actuelles par l'exemple ?")) return;
         var res = S.importFromCSV(SAMPLE_CSV);
         showAdminStatus("ok", "Exemple chargé (" + res.count + " lignes).");
+        casierIndex = 0;
         renderSearch();
         break;
       case "admin-clear":
         if (!confirmAction("Vider toutes les données locales ? Pense à exporter avant si besoin.")) return;
         S.setRows([]);
         showAdminStatus("ok", "Données vidées.");
+        casierIndex = 0;
         renderSearch();
         break;
       case "open-admin":
@@ -1735,11 +1983,25 @@ window.UI = (function () {
       case "prep-dec":
         prepAdjust(actionEl.getAttribute("data-id"), actionEl.getAttribute("data-type"), -1);
         break;
+      case "prep-cible-effacer":
+        prepViderCible();
+        renderPrep();
+        break;
       case "prep-remove":
         if (confirmAction("Retirer cette adresse de la préparation de tournée ?")) {
           Prep.remove(S.getIdTournee(), actionEl.getAttribute("data-id"));
           renderPrep();
         }
+        break;
+      case "casier-prev":
+        casierNav(-1);
+        break;
+      case "casier-next":
+        casierNav(1);
+        break;
+      case "suivi-resume-basculer":
+        suiviResumeDeplie = !suiviResumeDeplie;
+        renderSuiviProgress();
         break;
       case "tournee-prev":
         tourneeNav(-1);
@@ -1856,6 +2118,7 @@ window.UI = (function () {
     els.fab = document.getElementById("fab");
     els.dbSubNav = document.getElementById("dbSubNav");
     els.parcoursPanel = document.getElementById("parcoursPanel");
+    els.casierBrowser = document.getElementById("casierBrowser");
     els.mainTabBar = document.getElementById("mainTabBar");
     els.adminOverlay = document.getElementById("adminOverlay");
     els.adminBody = document.getElementById("adminBody");
@@ -1875,6 +2138,7 @@ window.UI = (function () {
     els.suiviSubNav = document.getElementById("suiviSubNav");
     els.suiviTourneeWrap = document.getElementById("suiviTourneeWrap");
     els.suiviGeoStatus = document.getElementById("suiviGeoStatus");
+    els.suiviMapContainer = document.getElementById("suiviMapContainer");
     els.suiviProximityList = document.getElementById("suiviProximityList");
     els.suiviEmptyState = document.getElementById("suiviEmptyState");
 
@@ -1903,9 +2167,18 @@ window.UI = (function () {
     });
 
     els.searchBox.addEventListener("input", function () { renderSearch(); renderSuggest("db"); });
-    els.prepSearchBox.addEventListener("input", function () { renderPrep(); renderSuggest("prep"); });
+    // Toute nouvelle saisie relâche la cible : on repart d'une recherche libre.
+    els.prepSearchBox.addEventListener("input", function () {
+      prepViderCible();
+      renderPrep();
+      renderSuggest("prep");
+    });
     els.searchBox.addEventListener("focus", function () { renderSuggest("db"); });
     els.prepSearchBox.addEventListener("focus", function () { renderSuggest("prep"); });
+
+    // Application masquée (écran éteint, autre onglet, appel entrant) : le GPS
+    // n'a plus personne à renseigner, il s'arrête. Il repart au retour.
+    document.addEventListener("visibilitychange", function () { majSuiviWatch(); });
 
     var adminObserver = new MutationObserver(function () {
       if (els.adminOverlay.classList.contains("open") && document.getElementById("admIdTournee")) {

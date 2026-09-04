@@ -31,11 +31,15 @@ window.Prep = (function () {
   var STATUTS = { A_FAIRE: "a_faire", DISTRIBUE: "distribue", ABANDONNE: "abandonne" };
 
   // Motifs de non-distribution : liste courte, choisie en un seul appui.
+  // Les quatre premiers subissent la non-distribution ; « Manque de temps » est
+  // le seul qui l'assume comme une décision du livreur — la distinction compte
+  // au moment de relire la tournée.
   var MOTIFS = [
     { key: "absent", label: "Absent", icon: "🚪" },
     { key: "boite", label: "Boîte pleine / inaccessible", icon: "📭" },
     { key: "introuvable", label: "Adresse introuvable", icon: "❓" },
-    { key: "refus", label: "Refus / Stop Pub", icon: "🚫" },
+    { key: "refus", label: "Refus client", icon: "🚫" },
+    { key: "temps", label: "Manque de temps", icon: "⏱️" },
     { key: "autre", label: "Autre", icon: "⋯" }
   ];
 

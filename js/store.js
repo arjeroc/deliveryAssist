@@ -170,6 +170,68 @@ window.Store = (function () {
     return { value: auto, source: auto ? "auto" : null };
   }
 
+  // --- ordre de la tournée (source de vérité) --------------------------------
+
+  // L'ordre de préparation est celui du casier, lu comme une grille :
+  // C1L1 → C1L2 → … → C1L5 → C2L1 → … → C5L5. ordre_zone puis ordre_rue
+  // départagent à l'intérieur d'une même case, et l'ordre du fichier tranche en
+  // dernier recours. Les adresses hors casier ferment la marche.
+  //
+  // Cet ordre appartient aux données, pas à la carte : la cartographie s'y
+  // conforme, elle ne le recalcule jamais. C'est ici, et nulle part ailleurs,
+  // qu'il se définit.
+  function ordreNum(v) {
+    return (v === "" || v === undefined || v === null || isNaN(Number(v))) ? Infinity : Number(v);
+  }
+
+  function rangTournee(row) {
+    return [ordreNum(row.casier_c), ordreNum(row.casier_l), ordreNum(row.ordre_zone), ordreNum(row.ordre_rue)];
+  }
+
+  function compareTournee(a, b) {
+    var ra = rangTournee(a), rb = rangTournee(b);
+    for (var i = 0; i < ra.length; i++) {
+      if (ra[i] !== rb[i]) return ra[i] - rb[i];
+    }
+    return 0;
+  }
+
+  // Copie triée : la liste d'origine n'est jamais réordonnée sur place, sans
+  // quoi un affichage pourrait modifier la base en la consultant.
+  function rowsOrdreTournee(list) {
+    return (list || state.rows)
+      .map(function (r, i) { return { row: r, i: i }; })
+      .sort(function (a, b) {
+        var c = compareTournee(a.row, b.row);
+        return c !== 0 ? c : a.i - b.i;
+      })
+      .map(function (x) { return x.row; });
+  }
+
+  // Découpage de la tournée en cases de casier, dans l'ordre de la grille.
+  // Une case = un paquet préparé ensemble : c'est l'unité que le livreur
+  // reconnaît en ouvrant son casier, donc l'unité de contrôle des données.
+  function etapesCasier(list) {
+    var ordonnees = rowsOrdreTournee(list);
+    var out = [];
+    ordonnees.forEach(function (r) {
+      var cle = hasCasier(r) ? ("C" + Number(r.casier_c) + "L" + Number(r.casier_l)) : "hors";
+      var dernier = out[out.length - 1];
+      if (!dernier || dernier.cle !== cle) {
+        dernier = {
+          cle: cle,
+          label: cle === "hors" ? "Hors casier" : cle,
+          c: cle === "hors" ? null : Number(r.casier_c),
+          l: cle === "hors" ? null : Number(r.casier_l),
+          rows: []
+        };
+        out.push(dernier);
+      }
+      dernier.rows.push(r);
+    });
+    return out;
+  }
+
   // --- validation -------------------------------------------------------------
 
   function validateRows(list) {
@@ -746,6 +808,9 @@ window.Store = (function () {
     casierLabel: casierLabel,
     positionInfo: positionInfo,
     isStopPub: isStopPub,
+    compareTournee: compareTournee,
+    rowsOrdreTournee: rowsOrdreTournee,
+    etapesCasier: etapesCasier,
     normalizeBool: normalizeBool,
 
     getCommuneColor: getCommuneColor,

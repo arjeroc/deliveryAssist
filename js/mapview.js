@@ -28,12 +28,22 @@ window.MapView = (function () {
     return R * c;
   }
 
-  function markerIcon(color, size) {
+  // Pastille d'un point à distribuer. La couleur porte la commune ; l'état
+  // n'est qu'une nuance — pleine pour ce qui reste à faire, effacée une fois
+  // traité. Une carte de terrain se lit au premier regard ou ne se lit pas.
+  function markerIcon(color, size, opts) {
     size = size || 16;
+    opts = opts || {};
+    var style = "width:" + size + "px;height:" + size + "px;border-radius:50%;" +
+      "border:2px solid #fff;box-shadow:0 0 0 1px rgba(0,0,0,.3);" +
+      "background:" + (opts.creux ? "transparent" : color) + ";";
+    // Anneau : plus épais que le liseré blanc d'une pastille pleine, sans quoi
+    // un point traité disparaîtrait complètement sur un fond de carte chargé.
+    if (opts.creux) style += "border:3px solid " + color + ";box-shadow:none;";
+    if (opts.opacity !== undefined) style += "opacity:" + opts.opacity + ";";
     return L.divIcon({
       className: "",
-      html: '<div style="width:' + size + 'px;height:' + size + 'px;border-radius:50%;background:' + color +
-            ';border:2px solid #fff;box-shadow:0 0 0 1px rgba(0,0,0,.3);"></div>',
+      html: '<div style="' + style + '"></div>',
       iconSize: [size, size],
       iconAnchor: [size / 2, size / 2]
     });
@@ -46,6 +56,7 @@ window.MapView = (function () {
     var markersById = {};
     var onSelectCallback = null;
     var userMarker = null;
+    var accuracyCircle = null;
 
     function ensureMap(containerId) {
       if (map) return map;
@@ -59,8 +70,14 @@ window.MapView = (function () {
       return map;
     }
 
-    function invalidateSize() {
-      if (map) setTimeout(function () { map.invalidateSize(); }, 60);
+    // Leaflet ne sait pas cadrer un conteneur encore masqué : il faut d'abord
+    // lui rendre sa taille, puis seulement recadrer. Le rappel sert à cela.
+    function invalidateSize(apres) {
+      if (!map) return;
+      setTimeout(function () {
+        map.invalidateSize();
+        if (apres) apres();
+      }, 60);
     }
 
     function onSelect(cb) { onSelectCallback = cb; }
@@ -75,7 +92,9 @@ window.MapView = (function () {
       var coords = [];
       points.forEach(function (p) {
         coords.push([p.lat, p.lon]);
-        var marker = L.marker([p.lat, p.lon], { icon: markerIcon(p.color || "#2f6b4f", p.size) });
+        var marker = L.marker([p.lat, p.lon], {
+          icon: markerIcon(p.color || "#2f6b4f", p.size, { creux: p.creux, opacity: p.opacity })
+        });
         if (p.popupHtml) marker.bindPopup(p.popupHtml);
         if (p.id) {
           marker.on("click", function () { if (onSelectCallback) onSelectCallback(p.id); });
@@ -88,11 +107,24 @@ window.MapView = (function () {
       }
     }
 
-    function setUserMarker(lat, lon) {
+    // Position du livreur : volontairement d'une autre nature que les
+    // pastilles — halo, anneau blanc, cœur bleu. Les pastilles portent la
+    // couleur de leur commune et pourraient être bleues elles aussi : c'est la
+    // forme, pas la teinte, qui doit distinguer « moi » de « à distribuer ».
+    function setUserMarker(lat, lon, accuracy) {
       if (!map) return;
-      if (userMarker) { extraLayer.removeLayer(userMarker); }
-      userMarker = L.circleMarker([lat, lon], {
-        radius: 8, color: "#fff", weight: 2, fillColor: "#1e6fd9", fillOpacity: 1
+      if (userMarker) { extraLayer.removeLayer(userMarker); userMarker = null; }
+      if (accuracyCircle) { extraLayer.removeLayer(accuracyCircle); accuracyCircle = null; }
+      if (accuracy && accuracy > 15) {
+        accuracyCircle = L.circle([lat, lon], {
+          radius: accuracy, color: "#1e6fd9", weight: 1, opacity: 0.35,
+          fillColor: "#1e6fd9", fillOpacity: 0.08, interactive: false
+        }).addTo(extraLayer);
+      }
+      userMarker = L.marker([lat, lon], {
+        icon: L.divIcon({ className: "", html: '<div class="me-dot"></div>', iconSize: [22, 22], iconAnchor: [11, 11] }),
+        zIndexOffset: 2000,
+        interactive: false
       }).addTo(extraLayer);
     }
 
@@ -106,6 +138,14 @@ window.MapView = (function () {
         circle._radiusRing = true;
         circle.addTo(extraLayer);
       });
+    }
+
+    function fitPoints(points, maxZoom) {
+      if (!map || !points.length) return;
+      try {
+        map.fitBounds(points.map(function (p) { return [p.lat, p.lon]; }),
+          { padding: [30, 30], maxZoom: maxZoom || 15 });
+      } catch (e) { /* ignore */ }
     }
 
     function centerOn(lat, lon, zoom) {
@@ -123,6 +163,7 @@ window.MapView = (function () {
       setUserMarker: setUserMarker,
       drawRadiusCircles: drawRadiusCircles,
       centerOn: centerOn,
+      fitPoints: fitPoints,
       onSelect: onSelect
     };
   }

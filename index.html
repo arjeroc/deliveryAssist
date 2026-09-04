@@ -4,6 +4,15 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1">
 <title>Assistant de Tournée</title>
+<meta name="theme-color" content="#2f6b4f">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Tournée">
+<link rel="icon" href="icons/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="icons/icon-32.png" sizes="32x32" type="image/png">
+<link rel="icon" href="icons/icon-192.png" sizes="192x192" type="image/png">
+<link rel="apple-touch-icon" href="icons/icon-180.png">
+<link rel="manifest" href="site.webmanifest">
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="">
 <link rel="stylesheet" href="css/styles.css">
 </head>
@@ -52,6 +61,7 @@
     <div class="view" id="view-map">
       <div id="parcoursPanel"></div>
       <div id="mapContainer"></div>
+      <div id="casierBrowser"></div>
     </div>
 
     <div class="view" id="view-fiche"></div>
@@ -93,14 +103,14 @@
 
     <div class="subnav" id="suiviSubNav">
       <button data-suivitab="tournee" class="active">🚚 Tournée</button>
-      <button data-suivitab="proximite">📍 À proximité</button>
+      <button data-suivitab="carte">🗺️ Carte</button>
     </div>
 
     <div class="suivi-view active" id="suivi-view-tournee">
       <div id="suiviTourneeWrap"></div>
     </div>
 
-    <div class="suivi-view" id="suivi-view-proximite">
+    <div class="suivi-view" id="suivi-view-carte">
       <div class="field-inline" id="suiviGeoStatus"></div>
       <div id="suiviMapContainer"></div>
       <div id="suiviProximityList"></div>
