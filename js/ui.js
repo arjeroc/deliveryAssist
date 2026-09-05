@@ -2222,37 +2222,59 @@ window.UI = (function () {
     }).join("");
   }
 
+  // Les réglages se lisent comme un parcours : on importe, on exporte, on règle
+  // l'apparence. Les titres de section portent ce découpage ; tout ce qui ne
+  // sert qu'une fois (jeu d'essai, remise à zéro, options techniques) descend
+  // dans les réglages avancés, replié.
   function renderAdmin() {
     var s = S.getSettings();
     els.adminBody.innerHTML =
-      '<div class="field"><label>Identifiant de tournée</label><input type="text" id="admIdTournee" value="' + escapeHtml(S.getIdTournee()) + '"></div>' +
-      '<div class="field"><label>Importer un fichier CSV</label><input type="file" id="admFileInput" accept=".csv,text/csv"></div>' +
-      '<div class="toolbar">' +
-        '<button class="primary" data-action="admin-export">Exporter le CSV</button>' +
-        '<button data-action="admin-export-trace">Exporter la trace (GeoJSON)</button>' +
-        '<button data-action="admin-sample">Charger un exemple</button>' +
-        '<button class="danger" data-action="admin-clear">Vider les données</button>' +
-      '</div>' +
-      '<div id="adminStatus"></div>' +
-      '<hr>' +
-      '<div class="fieldset-title">Trace de la tournée</div>' +
-      '<div class="toolbar">' +
-        '<button class="primary" data-action="admin-construire-trace">🧭 Construire la trace</button>' +
-      '</div>' +
-      '<small class="hint">Géocode les adresses sans position, recalcule le parcours et met à jour le GeoJSON dessiné sur la carte.</small>' +
-      '<div id="traceStatus"></div>' +
-      '<hr>' +
-      '<div class="fieldset-title">Couleurs par commune</div>' +
-      '<div id="communeColors">' + communeColorRowsHTML() + '</div>' +
-      '<hr>' +
+      '<section class="admin-section">' +
+        '<h2 class="admin-section-title">Import des données</h2>' +
+        '<div class="field admin-step">' +
+          '<label class="admin-step-title" for="admIdTournee"><span class="admin-step-num">1</span>Identifiant de tournée</label>' +
+          '<input type="text" id="admIdTournee" value="' + escapeHtml(S.getIdTournee()) + '">' +
+        '</div>' +
+        '<div class="field admin-step">' +
+          '<label class="admin-step-title" for="admFileInput"><span class="admin-step-num">2</span>Import du fichier</label>' +
+          '<input type="file" id="admFileInput" accept=".csv,text/csv">' +
+          '<div id="adminStatus"></div>' +
+        '</div>' +
+        '<div class="field admin-step">' +
+          '<div class="admin-step-title"><span class="admin-step-num">3</span>Construction de la trace</div>' +
+          '<div class="toolbar">' +
+            '<button class="primary" data-action="admin-construire-trace">🧭 Construire la trace</button>' +
+          '</div>' +
+          '<small class="hint">Géocode les adresses sans position, recalcule le parcours et met à jour le GeoJSON dessiné sur la carte.</small>' +
+          '<div id="traceStatus"></div>' +
+        '</div>' +
+      '</section>' +
+      '<section class="admin-section">' +
+        '<h2 class="admin-section-title">Export des données</h2>' +
+        '<div class="toolbar">' +
+          '<button class="primary" data-action="admin-export">Exporter le CSV</button>' +
+          '<button data-action="admin-export-trace">Exporter la trace (GeoJSON)</button>' +
+        '</div>' +
+      '</section>' +
+      '<section class="admin-section">' +
+        '<h2 class="admin-section-title">Apparence</h2>' +
+        '<small class="hint admin-section-hint">Couleur du repère et de la pastille de chaque commune.</small>' +
+        '<div id="communeColors">' + communeColorRowsHTML() + '</div>' +
+      '</section>' +
       // Les options techniques ne servent qu'une fois : au réglage initial, ou
       // le jour où l'une d'elles déçoit. Les laisser dépliées dans la page
       // ferait passer chaque jour devant des cases auxquelles on ne touche pas.
+      // Le jeu d'essai et la remise à zéro les rejoignent : hors de la première
+      // découverte, on ne les cherche pas.
       '<details class="advanced" id="admAvances">' +
         '<summary>Réglages avancés</summary>' +
         '<label class="switch-row"><input type="checkbox" id="admGeocodage" ' + (s.geocodageActif ? "checked" : "") + '> Activer le géocodage automatique (API adresse gouvernementale)</label>' +
         '<label class="switch-row"><input type="checkbox" id="admScan" ' + (s.scanActif !== false ? "checked" : "") + '> Scan d\'étiquette par la caméra (expérimental)</label>' +
         '<label class="switch-row"><input type="checkbox" id="admFleches" ' + (s.flechesSens !== false ? "checked" : "") + '> Flèches de sens sur la trace (au zoom rapproché)</label>' +
+        '<div class="toolbar">' +
+          '<button data-action="admin-sample">Charger un exemple</button>' +
+          '<button class="danger" data-action="admin-clear">Vider les données</button>' +
+        '</div>' +
         '<small class="hint">Séparateur des noms multiples&nbsp;: <code>|</code>. Les données restent uniquement dans ce navigateur.</small>' +
       '</details>';
   }
@@ -2325,6 +2347,7 @@ window.UI = (function () {
         showAdminStatus(res.errors.length ? "err" : (res.warnings.length ? "warn" : "ok"), msg);
         casierIndex = 0;
         prepZoneIndex = 0;
+        refreshCommuneColors();
         renderSearch();
         // La trace de la tournée se construit ici, au chargement des données,
         // et se met en cache : les jours suivants n'y reviennent pas.
@@ -2345,12 +2368,26 @@ window.UI = (function () {
       S.setSetting("flechesSens", e.target.checked);
       Parcours.rafraichirAffichage();
     });
+    bindCommuneColorEvents();
+  }
+
+  function bindCommuneColorEvents() {
     document.querySelectorAll("#communeColors input[type=color]").forEach(function (el) {
       el.addEventListener("change", function () {
         S.setCommuneColor(el.getAttribute("data-commune"), el.value);
         renderSearch();
       });
     });
+  }
+
+  // La liste des couleurs ne connaît que les communes chargées. Comme l'import,
+  // l'exemple et la remise à zéro se déclenchent désormais sans quitter les
+  // réglages, la section Apparence se remet à jour derrière eux.
+  function refreshCommuneColors() {
+    var wrap = document.getElementById("communeColors");
+    if (!wrap) return;
+    wrap.innerHTML = communeColorRowsHTML();
+    bindCommuneColorEvents();
   }
 
   // ---------------------------------------------------------------------
@@ -2425,6 +2462,7 @@ window.UI = (function () {
         showAdminStatus("ok", "Exemple chargé (" + res.count + " lignes).");
         casierIndex = 0;
         prepZoneIndex = 0;
+        refreshCommuneColors();
         renderSearch();
         break;
       case "admin-clear":
@@ -2433,6 +2471,7 @@ window.UI = (function () {
         showAdminStatus("ok", "Données vidées.");
         casierIndex = 0;
         prepZoneIndex = 0;
+        refreshCommuneColors();
         renderSearch();
         break;
       case "open-admin":
