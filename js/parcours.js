@@ -147,12 +147,17 @@ window.Parcours = (function () {
 
   // Une étape sans aucune position est placée entre ses voisines connues.
   // C'est une commodité de lecture, marquée comme telle : jamais un point sûr.
+  // Le repère se cherche dans la même tournée : placer une étape de tm0 entre
+  // deux étapes de tm1 la poserait sur un trajet qu'elle ne suit pas.
   function interpoler(etapes) {
     etapes.forEach(function (e, i) {
       if (e.lat !== null) return;
       var avant = null, apres = null, k;
-      for (k = i - 1; k >= 0; k--) if (etapes[k].lat !== null && etapes[k].niveau !== "estime") { avant = etapes[k]; break; }
-      for (k = i + 1; k < etapes.length; k++) if (etapes[k].lat !== null && etapes[k].niveau !== "estime") { apres = etapes[k]; break; }
+      function utilisable(x) {
+        return x.lat !== null && x.niveau !== "estime" && x.fichier === e.fichier;
+      }
+      for (k = i - 1; k >= 0; k--) if (utilisable(etapes[k])) { avant = etapes[k]; break; }
+      for (k = i + 1; k < etapes.length; k++) if (utilisable(etapes[k])) { apres = etapes[k]; break; }
       var ref = avant && apres ? null : (avant || apres);
       if (ref) {
         e.lat = ref.lat; e.lon = ref.lon;
@@ -237,9 +242,18 @@ window.Parcours = (function () {
   // ---------------------------------------------------------------------
   // Statistiques
   // ---------------------------------------------------------------------
+  // Le trajet entre la dernière boîte d'un fichier et la première du suivant
+  // n'est pas parcouru : la trace ne le dessine pas, la distance ne le compte
+  // pas non plus. Hors empilement, aucun point ne porte de fichier et la somme
+  // est celle d'avant, terme pour terme.
+  function memeFichier(a, b) {
+    return a.fichier === b.fichier;
+  }
+
   function distanceVolOiseau(points) {
     var d = 0, seuil = coupureMetres();
     for (var i = 1; i < points.length; i++) {
+      if (!memeFichier(points[i - 1], points[i])) continue;
       var l = window.MapView.distanceMeters(points[i - 1].lat, points[i - 1].lon, points[i].lat, points[i].lon);
       if (l <= seuil) d += l;
     }
@@ -257,7 +271,23 @@ window.Parcours = (function () {
     });
     var placees = modele.etapes.filter(function (e) { return e.lat !== null; });
     var estimees = placees.filter(function (e) { return e.niveau === "estime"; }).length;
+    // Nombre d'étapes par fichier, pour la légende des traces. Vide hors
+    // empilement : il n'y a alors qu'une trace, et rien à départager.
+    var parFichier = [];
+    if (S.multiActif()) {
+      var compteFichier = {};
+      modele.etapes.forEach(function (e) {
+        if (!e.fichier) return;
+        compteFichier[e.fichier] = (compteFichier[e.fichier] || 0) + 1;
+      });
+      parFichier = S.getFichiers()
+        .filter(function (f) { return compteFichier[f.id]; })
+        .map(function (f) {
+          return { id: f.id, etapes: compteFichier[f.id], couleur: S.getTourneeColor(f.id) };
+        });
+    }
     return {
+      fichiers: parFichier,
       communes: Object.keys(communes).length,
       rues: Object.keys(rues).length,
       adresses: modele.rows.length,
@@ -270,7 +300,9 @@ window.Parcours = (function () {
       // La distance n'a de sens que si la trace repose majoritairement sur des
       // positions tenues : au-delà d'un tiers d'estimations, on ne l'affiche pas.
       distanceFiable: placees.length > 1 && estimees / placees.length <= 0.34,
-      distanceVolOiseau: placees.length > 1 ? distanceVolOiseau(placees) : 0
+      distanceVolOiseau: placees.length > 1
+        ? distanceVolOiseau(etapesGroupeesParFichier(placees))
+        : 0
     };
   }
 
@@ -416,18 +448,47 @@ window.Parcours = (function () {
     return modele.etapes.filter(function (e) { return e.lat !== null; });
   }
 
+  // L'ordre de passage entrelace les fichiers case par case — C1L1 de tm1, puis
+  // C1L1 de tm0, puis C1L2 de tm1… C'est ce que le livreur suit, et c'est juste.
+  //
+  // Mais une trace qui suivrait cet entrelacement ne serait plus une trace :
+  // elle sauterait d'une tournée à l'autre à chaque case, et se réduirait à une
+  // poussière de tronçons. Le tracé regroupe donc les étapes par fichier, chacun
+  // dans son propre ordre, et les lignes se superposent sur la carte — une par
+  // tournée, de sa couleur. Le regroupement est stable : à l'intérieur d'un
+  // fichier, les étapes restent dans l'ordre de son casier.
+  //
+  // Fichier unique : la partition rend la liste telle quelle.
+  function etapesGroupeesParFichier(etapes) {
+    if (!S.multiActif()) return etapes;
+    var groupes = {}, ordre = [];
+    etapes.forEach(function (e) {
+      var f = e.fichier || "";
+      if (!groupes[f]) { groupes[f] = []; ordre.push(f); }
+      groupes[f].push(e);
+    });
+    // ordre suit la première apparition, donc la pile : les traces se succèdent
+    // dans l'ordre d'empilement, comme tout le reste.
+    return ordre.reduce(function (out, f) { return out.concat(groupes[f]); }, []);
+  }
+
   // Les étapes retombant au même endroit (centre de commune) sont fusionnées
   // pour le tracé : la trace suit le terrain, pas les répétitions de données.
+  //
+  // La fusion s'arrête à la frontière du fichier : deux tournées qui passent au
+  // même endroit y passent chacune pour son compte, et chacune doit garder son
+  // point sur sa propre trace.
   function pointsTrace() {
     var out = [];
-    placees().forEach(function (e) {
+    etapesGroupeesParFichier(placees()).forEach(function (e) {
       var dernier = out[out.length - 1];
-      if (dernier && window.MapView.distanceMeters(dernier.lat, dernier.lon, e.lat, e.lon) < FUSION_M) {
+      if (dernier && dernier.fichier === e.fichier &&
+          window.MapView.distanceMeters(dernier.lat, dernier.lon, e.lat, e.lon) < FUSION_M) {
         dernier.etapes.push(e);
         if (ordreNiveau(e.niveau) > ordreNiveau(dernier.niveau)) dernier.niveau = e.niveau;
         return;
       }
-      out.push({ lat: e.lat, lon: e.lon, niveau: e.niveau, etapes: [e] });
+      out.push({ lat: e.lat, lon: e.lon, niveau: e.niveau, fichier: e.fichier, etapes: [e] });
     });
     return out;
   }
@@ -441,11 +502,21 @@ window.Parcours = (function () {
     return v === undefined ? 3 : v;
   }
 
+  // Fichier unique : la couleur dit ce que vaut la position — c'est la seule
+  // chose qu'une trace ait alors à distinguer. Plusieurs fichiers empilés : la
+  // couleur dit de quelle tournée vient le trait, et la qualité continue de se
+  // lire dans l'épaisseur, l'opacité et les pointillés, qui ne changent pas.
+  // Une trace estimée reste pointillée, quelle que soit sa tournée.
+  function couleurTroncon(point, pire) {
+    if (point.fichier) return S.getTourneeColor(point.fichier);
+    return COULEURS[pire] || COULEURS.estime;
+  }
+
   function styleTroncon(a, b) {
     var pire = ordreNiveau(a.niveau) >= ordreNiveau(b.niveau) ? a.niveau : b.niveau;
     var sur = pire === "reel" || pire === "geocode";
     return {
-      color: COULEURS[pire] || COULEURS.estime,
+      color: couleurTroncon(b, pire),
       weight: sur ? 5 : 4,
       opacity: sur ? 0.9 : 0.65,
       dashArray: sur ? null : "6,7"
@@ -478,15 +549,19 @@ window.Parcours = (function () {
   }
 
   // La trace n'est pas une ligne mais une suite de segments continus. Elle
-  // s'interrompt sur deux motifs, et ne comble ni l'un ni l'autre :
+  // s'interrompt sur trois motifs, et n'en comble aucun :
   //   - une étape dont la position n'est qu'estimée : il n'y a rien à relier ;
-  //   - un saut plus long qu'un trajet plausible entre deux boîtes.
+  //   - un saut plus long qu'un trajet plausible entre deux boîtes ;
+  //   - un changement de fichier de tournée : chaque fichier tient sa propre
+  //     trace, et relier la dernière boîte de l'un à la première de l'autre
+  //     dessinerait un trajet que personne ne fait.
   // Renvoie les indices des points de chaque segment, les isolés écartés.
   function segmentsTrace(points, trace) {
     var segments = [], courant = null, seuil = coupureMetres();
     points.forEach(function (p, i) {
       if (p.niveau === "estime") { courant = null; return; }
       if (courant && longueurTroncon(points, trace, i) > seuil) courant = null;
+      if (courant && points[i - 1].fichier !== p.fichier) courant = null;
       if (!courant) { courant = []; segments.push(courant); }
       courant.push(i);
     });
@@ -597,7 +672,7 @@ window.Parcours = (function () {
     var points = pointsTrace();
 
     effacer(instance);
-    if (!points.length) return Promise.resolve({ modele: modele, trace: null });
+    if (!points.length) return Promise.resolve({ modele: modele, trace: null, points: points });
 
     v.map.addLayer(v.calques.trace);
     dessinerTrace(v, points, null);
@@ -605,24 +680,31 @@ window.Parcours = (function () {
     if (options.recentrer !== false) recentrer(instance);
 
     if (options.router === false || points.length < 2) {
-      return Promise.resolve({ modele: modele, trace: null });
+      return Promise.resolve({ modele: modele, trace: null, points: points });
     }
     return router(points)
       .then(function (trace) {
         dessinerTrace(v, points, trace);
-        return { modele: modele, trace: trace };
+        return { modele: modele, trace: trace, points: points };
       })
       .catch(function () {
         // Routage indisponible : la trace reste en lignes directes, ce que le
         // résumé signale plutôt que de laisser croire à un tracé routier.
-        return { modele: modele, trace: null };
+        return { modele: modele, trace: null, points: points };
       });
   }
 
-  function distanceRoutee(trace) {
+  // points est facultatif : sans lui, la somme est celle de tous les tronçons
+  // sous le seuil, comme avant l'empilement.
+  function distanceRoutee(trace, points) {
     if (!trace || !trace.distances || !trace.distances.length) return 0;
     var seuil = coupureMetres();
-    return trace.distances.reduce(function (a, b) { return b > seuil ? a : a + b; }, 0);
+    return trace.distances.reduce(function (a, b, k) {
+      if (b > seuil) return a;
+      // distances[k] relie points[k] à points[k + 1].
+      if (points && points[k] && points[k + 1] && !memeFichier(points[k], points[k + 1])) return a;
+      return a + b;
+    }, 0);
   }
 
   // Construction de la trace hors de tout affichage : appelée au chargement
@@ -672,10 +754,18 @@ window.Parcours = (function () {
       }
       var depart = points[segment[0]].etapes[0];
       var arrivee = points[segment[segment.length - 1]].etapes[0];
+      var premiere = points[segment[0]].etapes[0];
+      var fichier = points[segment[0]].fichier;
+      var idT = (premiere.adresses[0] && premiere.adresses[0].id_tournee) || S.getIdTournee();
       return {
         type: "Feature",
         properties: {
           segment: n + 1,
+          // Un segment appartient à un seul fichier, par construction : la trace
+          // se coupe au changement. L'export le dit, et donne la couleur sous
+          // laquelle la carte l'a dessiné — les deux doivent se lire pareil.
+          id_tournee: idT,
+          couleur: fichier ? S.getTourneeColor(fichier) : undefined,
           etapes: segment.length,
           etape_depart: depart.rang,
           etape_arrivee: arrivee.rang,
@@ -693,6 +783,13 @@ window.Parcours = (function () {
       properties: {
         id_tournee: S.getIdTournee(),
         genere_le: new Date().toISOString(),
+        // Les fichiers empilés et leur couleur, dans l'ordre de passage. Absent
+        // hors empilement : il n'y a alors qu'une tournée, déjà nommée au-dessus.
+        fichiers: S.multiActif()
+          ? S.getFichiers().map(function (f) {
+              return { id: f.id, adresses: f.count, couleur: S.getTourneeColor(f.id) };
+            })
+          : undefined,
         adresses: modele.rows.length,
         etapes: modele.etapes.length,
         segments: features.length,

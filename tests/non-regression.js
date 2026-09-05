@@ -29,8 +29,10 @@ function charger(src) {
 // Le témoin est figé sur le dernier commit d'avant l'empilement des fichiers.
 // Le comparer à HEAD ferait de ce test une tautologie dès le commit suivant.
 const AVANT_MULTI = "fe4c916";
-const ancien = execSync("git show " + AVANT_MULTI + ":js/store.js", { cwd: RACINE, encoding: "utf8" });
-const nouveau = fs.readFileSync(path.join(RACINE, "js/store.js"), "utf8");
+const ancienStore = execSync("git show " + AVANT_MULTI + ":js/store.js", { cwd: RACINE, encoding: "utf8" });
+const ancienParcours = execSync("git show " + AVANT_MULTI + ":js/parcours.js", { cwd: RACINE, encoding: "utf8" });
+const nouveauParcours = fs.readFileSync(path.join(RACINE, "js/parcours.js"), "utf8");
+const nouveauStore = fs.readFileSync(path.join(RACINE, "js/store.js"), "utf8");
 
 // le jeu d'essai de l'application, extrait de ui.js
 const uiSrc = fs.readFileSync(path.join(RACINE, "js/ui.js"), "utf8");
@@ -62,8 +64,8 @@ function empreinte(S) {
   };
 }
 
-const a = empreinte(charger(ancien));
-const b = empreinte(charger(nouveau));
+const a = empreinte(charger(ancienStore));
+const b = empreinte(charger(nouveauStore));
 
 let echecs = 0;
 ["ordre", "cases", "colonnes", "csvExport"].forEach((k) => {
@@ -77,6 +79,59 @@ let echecs = 0;
       a[k].forEach((v, i) => { if (v !== b[k][i]) console.log("         [" + i + "] ancien=" + v + "  nouveau=" + b[k][i]); });
       if (a[k].length !== b[k].length) console.log("         longueurs " + a[k].length + " vs " + b[k].length);
     }
+  }
+});
+
+// --- la trace, elle aussi, doit sortir identique sur un fichier unique -------
+function fauxLeaflet() {
+  const groupe = () => ({ addTo: () => {}, clearLayers: () => {}, addLayer: () => {} });
+  return { layerGroup: groupe, polyline: groupe, marker: groupe, divIcon: () => ({}) };
+}
+function distanceMeters(lat1, lon1, lat2, lon2) {
+  const R = 6371000, rad = Math.PI / 180;
+  const dLat = (lat2 - lat1) * rad, dLon = (lon2 - lon1) * rad;
+  const x = Math.sin(dLat / 2) ** 2 +
+    Math.cos(lat1 * rad) * Math.cos(lat2 * rad) * Math.sin(dLon / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(x));
+}
+
+function empreinteTrace(srcStore, srcParcours) {
+  const sandbox = {
+    window: {}, localStorage: fauxLocalStorage(), console, L: fauxLeaflet(),
+    fetch: () => Promise.reject(new Error("hors ligne")), setTimeout, clearTimeout, Promise,
+  };
+  sandbox.window.localStorage = sandbox.localStorage;
+  sandbox.window.MapView = { distanceMeters };
+  sandbox.window.L = sandbox.L;
+  vm.createContext(sandbox);
+  vm.runInContext(srcStore, sandbox);
+  vm.runInContext(srcParcours, sandbox);
+  const S = sandbox.window.Store, P = sandbox.window.Parcours;
+  S.load();
+  S.importFromCSV(CSV);
+  const m = P.construire();
+  const geo = P.geojson();
+  return {
+    etapes: m.etapes.map((e) => e.rang + "|" + e.rue + "|" + e.commune + "|" + e.niveau +
+      "|" + (e.lat === null ? "-" : e.lat.toFixed(6)) + "|" + e.casiers.join("+")),
+    segments: geo.features.map((f) => f.properties.etape_depart + "->" + f.properties.etape_arrivee +
+      "|" + f.properties.distance_m + "|" + f.geometry.coordinates.length),
+    distanceVolOiseau: Math.round(P.resume(m).distanceVolOiseau),
+  };
+}
+
+const ta = empreinteTrace(ancienStore, ancienParcours);
+const tb = empreinteTrace(nouveauStore, nouveauParcours);
+["etapes", "segments", "distanceVolOiseau"].forEach((k) => {
+  const ja = JSON.stringify(ta[k]), jb = JSON.stringify(tb[k]);
+  if (ja === jb) {
+    console.log("  OK    trace." + k + " identique (" +
+      (Array.isArray(ta[k]) ? ta[k].length + " entrees" : ja) + ")");
+  } else {
+    echecs++;
+    console.log("  ECHEC trace." + k + " differe");
+    console.log("         ancien  " + ja);
+    console.log("         nouveau " + jb);
   }
 });
 

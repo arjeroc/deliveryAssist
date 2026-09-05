@@ -396,6 +396,10 @@ mark{background:#fff2a8;color:inherit;border-radius:3px;padding:0 1px;}
 .pc-borne-txt b{color:var(--ink);}
 .pc-legende{display:flex;flex-wrap:wrap;gap:6px 12px;margin-top:10px;font-size:11.5px;color:var(--muted);}
 .pc-leg{display:inline-flex;align-items:center;gap:5px;}
+/* Sous l'empilement, la couleur est prise par la tournée : la qualité des
+   positions garde son compte, sur une ligne sans pastille qui mentirait. */
+.pc-legende-qualite{margin-top:4px;}
+.pc-leg-txt{display:inline-block;}
 .pc-leg i{width:10px;height:10px;border-radius:50%;display:inline-block;}
 .pc-alerte{margin-top:10px;background:var(--warn-bg);color:var(--warn);border-radius:8px;padding:8px 10px;font-size:12.5px;}
 .pc-actions{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-top:10px;}
@@ -620,6 +624,12 @@ details.advanced summary{font-size:12.5px;color:var(--accent);cursor:pointer;fon
 .pile-rang{
   flex:0 0 auto;width:20px;height:20px;border-radius:50%;background:var(--accent);color:var(--accent-ink);
   font-size:11.5px;font-weight:700;display:flex;align-items:center;justify-content:center;
+}
+/* La pile vit dans un .field, dont la règle générale étire tout input sur la
+   largeur : la pastille doit reprendre la main sur elle. */
+.pile-item input.pile-couleur{
+  flex:0 0 auto;width:30px;height:26px;padding:0;border:1px solid var(--line);border-radius:6px;
+  background:#fff;cursor:pointer;
 }
 .pile-corps{flex:1;min-width:0;}
 .pile-nom{display:block;font-size:14px;font-weight:700;}

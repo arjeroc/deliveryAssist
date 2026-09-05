@@ -40,6 +40,10 @@ window.Store = (function () {
       // drapeau, l'application ne connaît qu'un fichier et se comporte
       // exactement comme avant.
       multiTournees: false,
+      // Couleur de la trace de chaque fichier empilé, par identifiant de
+      // fichier. Vide au départ : une couleur de la palette est attribuée
+      // d'office, et n'est retenue ici que si l'utilisateur en choisit une.
+      tourneeColors: {},
       // Scan d'étiquette : expérimental, désactivable si la lecture déçoit.
       scanActif: true,
       // Flèches de sens sur la trace : actives par défaut. C'est le seul
@@ -832,6 +836,50 @@ window.Store = (function () {
     return AUTO_PALETTE[hashString(commune.toUpperCase()) % AUTO_PALETTE.length];
   }
 
+  // Palette des traces. Elle est distincte de celle des communes : sur la carte
+  // des Données, la trace et les pastilles de commune ne se lisent pas au même
+  // endroit, mais deux traces côte à côte doivent se distinguer d'un coup d'œil,
+  // et se distinguer aussi des quatre couleurs de qualité de position.
+  var PALETTE_TOURNEE = [
+    "#c1121f", // rouge profond
+    "#0a7d8c", // sarcelle
+    "#7b2cbf", // violet
+    "#bc6c25", // ocre
+    "#1d3557", // bleu nuit
+    "#4f772d", // olive
+    "#d81b60", // magenta
+    "#00695c"  // vert-bleu
+  ];
+
+  // Couleur d'office d'un fichier : tirée de son identifiant, puis décalée tant
+  // qu'un autre fichier la porte déjà. Le départage se fait sur les
+  // identifiants triés, jamais sur la pile : réordonner les fichiers ne doit pas
+  // faire changer une trace de couleur sous les yeux de l'utilisateur.
+  function autoColorForTournee(id) {
+    var ids = state.fichiers.map(function (f) { return f.id; }).sort();
+    var pris = {};
+    for (var k = 0; k < ids.length; k++) {
+      var base = hashString(ids[k]) % PALETTE_TOURNEE.length;
+      var j = 0;
+      while (j < PALETTE_TOURNEE.length && pris[(base + j) % PALETTE_TOURNEE.length]) j++;
+      var choisi = (base + j) % PALETTE_TOURNEE.length;
+      pris[choisi] = true;
+      if (ids[k] === id) return PALETTE_TOURNEE[choisi];
+    }
+    return PALETTE_TOURNEE[hashString(String(id || "")) % PALETTE_TOURNEE.length];
+  }
+
+  function getTourneeColor(id) {
+    if (!id) return PALETTE_TOURNEE[0];
+    return state.settings.tourneeColors[id] || autoColorForTournee(id);
+  }
+
+  function setTourneeColor(id, hex) {
+    if (!id) return;
+    state.settings.tourneeColors[id] = hex;
+    persist();
+  }
+
   function getCommuneColor(commune) {
     if (!commune) return "#9aa39a";
     var key = commune.toUpperCase().trim();
@@ -1256,6 +1304,8 @@ window.Store = (function () {
 
     getCommuneColor: getCommuneColor,
     setCommuneColor: setCommuneColor,
+    getTourneeColor: getTourneeColor,
+    setTourneeColor: setTourneeColor,
     listCommunes: listCommunes,
     listRues: listRues,
     listAdressesDeRue: listAdressesDeRue,

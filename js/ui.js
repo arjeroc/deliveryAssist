@@ -326,7 +326,7 @@ window.UI = (function () {
     // La distance n'est annoncée que si la trace la porte : routière si le
     // calcul a abouti, à vol d'oiseau sinon, et masquée si trop d'estimations.
     var distance = "";
-    var metres = Parcours.distanceRoutee(res.trace);
+    var metres = Parcours.distanceRoutee(res.trace, res.points);
     if (metres > 0) distance = fmtKm(metres) + " par la route";
     else if (r.distanceFiable) distance = "~" + fmtKm(r.distanceVolOiseau) + " à vol d'oiseau";
 
@@ -355,12 +355,29 @@ window.UI = (function () {
                     '<span class="pc-borne-txt"><b>Arrivée</b> ' + escapeHtml(r.arrivee.rue) + ' · ' + escapeHtml(r.arrivee.commune) + '</span>' +
                   '</div>'
                 : "") +
-              '<div class="pc-legende">' +
-                legendeItem("reel", p.reel + " GPS relevé(s)") +
-                legendeItem("geocode", p.geocode + " géocodée(s)") +
-                legendeItem("approx", p.approx + " approchée(s)") +
-                (r.etapesEstimees ? legendeItem("estime", r.etapesEstimees + " étape(s) estimée(s)") : "") +
-              '</div>' +
+              // Empilement : la couleur du trait dit la tournée, c'est donc
+              // elle que la légende doit nommer. La qualité des positions garde
+              // son compte, mais sans pastille — elle se lit dans le trait
+              // (plein, fin, pointillé), plus dans la couleur.
+              (r.fichiers && r.fichiers.length
+                ? '<div class="pc-legende">' +
+                    r.fichiers.map(function (f) {
+                      return '<span class="pc-leg"><i style="background:' + f.couleur + '"></i>' +
+                        escapeHtml(f.id) + ' · ' + f.etapes + ' étape(s)</span>';
+                    }).join("") +
+                  '</div>' +
+                  '<div class="pc-legende pc-legende-qualite">' +
+                    '<span class="pc-leg-txt">' + p.reel + ' GPS relevé(s) · ' + p.geocode +
+                    ' géocodée(s) · ' + p.approx + ' approchée(s)' +
+                    (r.etapesEstimees ? ' · ' + r.etapesEstimees + ' étape(s) estimée(s)' : "") +
+                    '</span>' +
+                  '</div>'
+                : '<div class="pc-legende">' +
+                    legendeItem("reel", p.reel + " GPS relevé(s)") +
+                    legendeItem("geocode", p.geocode + " géocodée(s)") +
+                    legendeItem("approx", p.approx + " approchée(s)") +
+                    (r.etapesEstimees ? legendeItem("estime", r.etapesEstimees + " étape(s) estimée(s)") : "") +
+                  '</div>') +
             '</div>'
           : "") +
         (parcoursDeplie
@@ -2253,6 +2270,10 @@ window.UI = (function () {
       return '<li class="pile-item" draggable="true" data-id="' + id + '">' +
         '<span class="pile-poignee" aria-hidden="true">⠿</span>' +
         '<span class="pile-rang">' + (i + 1) + '</span>' +
+        // La couleur de la trace se règle là où se règle la pile : c'est le
+        // même objet — un fichier, sa place, son trait sur la carte.
+        '<input type="color" class="pile-couleur" data-fichier="' + id + '"' +
+          ' value="' + S.getTourneeColor(f.id) + '" aria-label="Couleur de la trace ' + id + '">' +
         '<span class="pile-corps">' +
           '<span class="pile-nom">' + id + '</span>' +
           '<span class="pile-meta">' + f.count + ' adresse(s)' +
@@ -2286,7 +2307,9 @@ window.UI = (function () {
       '<label class="pile-ajout" for="admFileInput">Ajouter un fichier</label>' +
       '<input type="file" id="admFileInput" accept=".csv,text/csv">' +
       '<small class="hint">L\'ordre de la pile départage les fichiers qui occupent la même case : ' +
-        'le premier passe avant. Réimporter un fichier déjà présent le met à jour sans changer sa place.</small>' +
+        'le premier passe avant. Chaque fichier trace sa propre ligne sur la carte, ' +
+        'de la couleur choisie ici. Réimporter un fichier déjà présent le met à jour ' +
+        'sans changer sa place.</small>' +
       '<div id="adminStatus"></div>' +
     '</div>';
   }
@@ -2553,6 +2576,19 @@ window.UI = (function () {
   function bindPileFichiers() {
     var liste = document.getElementById("pileFichiers");
     if (!liste) return;
+    liste.querySelectorAll("input.pile-couleur").forEach(function (el) {
+      el.addEventListener("change", function () {
+        S.setTourneeColor(el.getAttribute("data-fichier"), el.value);
+        // La carte se redessine à chaque fois qu'on y revient : elle prendra la
+        // nouvelle couleur sans qu'on ait à la forcer d'ici.
+        parcoursDernier = null;
+      });
+      // Le sélecteur de couleur est dans une ligne déplaçable : sans cela, le
+      // début d'un glissement sur la pastille emporte la ligne au lieu d'ouvrir
+      // la palette.
+      el.addEventListener("pointerdown", function (ev) { ev.stopPropagation(); });
+      el.addEventListener("dragstart", function (ev) { ev.preventDefault(); ev.stopPropagation(); });
+    });
     liste.querySelectorAll(".pile-item").forEach(function (item) {
       item.addEventListener("dragstart", function (ev) {
         pileDragId = item.getAttribute("data-id");
