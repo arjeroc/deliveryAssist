@@ -178,6 +178,22 @@ window.Prep = (function () {
     return Object.keys(getZonesStandard(idTournee)).length;
   }
 
+  // Une case se nomme par sa position tant qu'un seul fichier est chargé, et par
+  // sa position et son fichier dès qu'ils sont plusieurs. Les zones déjà
+  // retenues sont renommées avec elle : passer d'un fichier à deux — ou
+  // l'inverse — ne doit pas effacer une préparation déjà faite.
+  function remapZonesStandard(idTournee, transformer) {
+    var b = zones[idTournee];
+    if (!b) return;
+    var out = {};
+    Object.keys(b).forEach(function (cle) {
+      var neuf = transformer(cle);
+      if (neuf) out[neuf] = true;
+    });
+    zones[idTournee] = out;
+    persistZones();
+  }
+
   function load() {
     loadZones();
     loadStandard();
@@ -359,6 +375,7 @@ window.Prep = (function () {
     setStandardStatutMany: setStandardStatutMany,
     restoreStandard: restoreStandard,
     getZonesStandard: getZonesStandard,
+    remapZonesStandard: remapZonesStandard,
     isZoneStandard: isZoneStandard,
     setZoneStandard: setZoneStandard,
     toggleZoneStandard: toggleZoneStandard,

@@ -114,8 +114,11 @@ window.Parcours = (function () {
   // ---------------------------------------------------------------------
   // Découpage en étapes
   // ---------------------------------------------------------------------
+  // Le fichier d'origine entre dans la clé : deux fichiers empilés peuvent
+  // décrire la même rue sur la même case sans être le même passage. Le
+  // discriminant est vide hors empilement — la clé est alors celle d'avant.
   function cleRue(row) {
-    return S.normalize(row.rue) + "|" + S.normalize(row.commune);
+    return S.normalize(row.rue) + "|" + S.normalize(row.commune) + S.suffixeFichier(row);
   }
 
   function mediane(valeurs) {
@@ -176,7 +179,8 @@ window.Parcours = (function () {
       // construites dans l'ordre de la tournée, ces rangs sont déjà croissants
       // — aucun tri ne vient donc redistribuer les étapes après coup.
       position: membres[0].i,
-      casiers: membres.map(function (m) { return S.casierLabel(m.row); })
+      fichier: S.cleFichier(premier),
+      casiers: membres.map(function (m) { return S.casierLabelEtape(m.row); })
         .filter(function (v, k, t) { return t.indexOf(v) === k; })
     };
     e.adresses.forEach(function (r) { if (r.lieu_dit) e.lieuxDits[r.lieu_dit.trim()] = true; });

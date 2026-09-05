@@ -469,7 +469,7 @@ window.UI = (function () {
   function badgeFor(row) {
     var out = "";
     out += S.hasCasier(row)
-      ? '<span class="tag tag-ok">' + escapeHtml(S.casierLabel(row)) + '</span>'
+      ? '<span class="tag tag-ok">' + escapeHtml(S.casierLabelEtape(row)) + '</span>'
       : '<span class="tag tag-warn">Hors casier</span>';
     out += S.hasPosition(row)
       ? '<span class="tag tag-ok">📍 GPS</span>'
@@ -627,7 +627,7 @@ window.UI = (function () {
         '<h3>🗂️ Tri de tournée</h3>' +
         '<div class="kv"><span>Colonne</span><strong>' + (escapeHtml(row.casier_c) || "—") + '</strong></div>' +
         '<div class="kv"><span>Ligne</span><strong>' + (escapeHtml(row.casier_l) || "—") + '</strong></div>' +
-        '<div class="kv"><span>Casier</span><strong>' + escapeHtml(S.casierLabel(row)) + '</strong></div>' +
+        '<div class="kv"><span>Casier</span><strong>' + escapeHtml(S.casierLabelEtape(row)) + '</strong></div>' +
         '<div class="kv"><span>Position dans la tournée</span>' + positionBadge(row) + '</div>' +
       '</section>' +
 
@@ -1099,7 +1099,7 @@ window.UI = (function () {
     var names = S.namesOf(row);
     var title = names.length ? names.map(function (n) { return highlight(n, query); }).join(" / ") : "(sans nom)";
     var addr = [row.numero, row.rue].filter(Boolean).join(" ");
-    var contexte = [addr, S.communeLabelOf(row), S.casierLabel(row)].filter(Boolean).join(" · ");
+    var contexte = [addr, S.communeLabelOf(row), S.casierLabelEtape(row)].filter(Boolean).join(" · ");
     return (
       '<div class="prep-card" data-id="' + row.id + '" style="border-left:5px solid ' + S.getCommuneColor(row.commune) + ';">' +
         '<div class="prep-card-head">' +
@@ -1193,7 +1193,11 @@ window.UI = (function () {
         'aria-pressed="' + retenue + '">' +
       '<span class="zl-case">L' + ligne.l + '</span>' +
       '<span class="zl-corps">' +
-        '<span class="zl-bornes">' + zoneBornesHTML(ligne) + '</span>' +
+        '<span class="zl-bornes">' + zoneBornesHTML(ligne) +
+          // Deux fichiers empilés peuvent poser chacun leur ligne sur la même
+          // case : sans son étiquette, on ne saurait pas laquelle on retient.
+          (ligne.fichier ? '<span class="zl-fichier">' + escapeHtml(ligne.fichier) + '</span>' : "") +
+        '</span>' +
         '<span class="zl-meta">' +
           '<span class="commune-dot" style="background:' + S.getCommuneColor(ligne.commune) + ';"></span>' +
           escapeHtml(ligne.commune || "commune inconnue") +
@@ -1630,8 +1634,13 @@ window.UI = (function () {
   //
   // Les adresses hors casier viennent d'une autre tournée : elles partagent un
   // compartiment à part, qui ne peut collisionner avec aucune case réelle.
+  //
+  // Quand plusieurs fichiers sont empilés, le fichier d'origine entre dans la
+  // clé : deux fichiers posant chacun une C1L1 sur la même rue décrivent deux
+  // paquets réels, à deux moments distincts de la tournée. Hors empilement, le
+  // discriminant est vide et la clé reste celle d'avant, au caractère près.
   function tourneeGroupKeyOf(row) {
-    return (S.casierCle(row) || "HORS") + "|" +
+    return (S.casierCle(row) || "HORS") + S.suffixeFichier(row) + "|" +
       (row.rue || "").trim().toUpperCase() + "|" +
       (row.commune || "").trim().toUpperCase();
   }
@@ -1660,7 +1669,7 @@ window.UI = (function () {
     var retenue = {};
     Prep.listEntries(idT).forEach(function (e) { retenue[e.addressId] = true; });
     S.getRows().forEach(function (r) {
-      if (S.hasCasier(r) && zonesStandard[S.casierCle(r)]) retenue[r.id] = true;
+      if (S.hasCasier(r) && zonesStandard[S.casierCle(r) + S.suffixeFichier(r)]) retenue[r.id] = true;
     });
     var rows = S.rowsOrdreTournee().filter(function (r) { return retenue[r.id]; });
 
@@ -1674,7 +1683,8 @@ window.UI = (function () {
           key: key, rue: row.rue || "(rue non renseignée)", commune: row.commune || "",
           // Toutes les adresses du groupe partagent la case, par construction :
           // la première la donne pour toutes.
-          casier: S.casierCle(row), casierLabel: S.casierLabel(row),
+          casier: S.casierCle(row), casierLabel: S.casierLabelEtape(row),
+          fichier: S.cleFichier(row),
           lieuxDits: {}, items: [], standards: []
         };
         order.push(key);
@@ -2226,8 +2236,73 @@ window.UI = (function () {
   // l'apparence. Les titres de section portent ce découpage ; tout ce qui ne
   // sert qu'une fois (jeu d'essai, remise à zéro, options techniques) descend
   // dans les réglages avancés, replié.
+  // --- empilement des fichiers de tournée -----------------------------------
+  //
+  // La pile se lit de haut en bas et c'est l'ordre de passage : à position de
+  // casier égale, le fichier du haut passe avant celui du dessous. Deux gestes
+  // pour la même chose — le glisser-déposer sous la souris, deux flèches sous
+  // le pouce — parce qu'aucun des deux ne suffit seul sur un terminal qu'on
+  // tient d'une main.
+  function fichiersPileHTML() {
+    var fichiers = S.getFichiers();
+    if (!fichiers.length) {
+      return '<div class="muted small">Aucun fichier chargé pour l\'instant.</div>';
+    }
+    return '<ol class="pile-fichiers" id="pileFichiers">' + fichiers.map(function (f, i) {
+      var id = escapeHtml(f.id);
+      return '<li class="pile-item" draggable="true" data-id="' + id + '">' +
+        '<span class="pile-poignee" aria-hidden="true">⠿</span>' +
+        '<span class="pile-rang">' + (i + 1) + '</span>' +
+        '<span class="pile-corps">' +
+          '<span class="pile-nom">' + id + '</span>' +
+          '<span class="pile-meta">' + f.count + ' adresse(s)' +
+            (f.nom ? ' · ' + escapeHtml(f.nom) : "") + '</span>' +
+        '</span>' +
+        '<span class="pile-actions">' +
+          '<button class="pile-btn" data-action="fichier-monter" data-id="' + id + '"' +
+            (i === 0 ? " disabled" : "") + ' aria-label="Monter ' + id + '">↑</button>' +
+          '<button class="pile-btn" data-action="fichier-descendre" data-id="' + id + '"' +
+            (i === fichiers.length - 1 ? " disabled" : "") + ' aria-label="Descendre ' + id + '">↓</button>' +
+          '<button class="pile-btn retirer" data-action="fichier-retirer" data-id="' + id + '"' +
+            ' aria-label="Retirer ' + id + '">✕</button>' +
+        '</span>' +
+      '</li>';
+    }).join("") + '</ol>';
+  }
+
+  // Étape 2 de l'import. Un seul fichier : le champ d'hier, qui remplace la
+  // base. Plusieurs : la pile, et un champ qui ajoute au lieu de remplacer.
+  function etapeFichiersHTML(multi) {
+    if (!multi) {
+      return '<div class="field admin-step">' +
+        '<label class="admin-step-title" for="admFileInput"><span class="admin-step-num">2</span>Import du fichier</label>' +
+        '<input type="file" id="admFileInput" accept=".csv,text/csv">' +
+        '<div id="adminStatus"></div>' +
+      '</div>';
+    }
+    return '<div class="field admin-step">' +
+      '<div class="admin-step-title"><span class="admin-step-num">2</span>Fichiers de tournée</div>' +
+      '<div id="pileFichiersWrap">' + fichiersPileHTML() + '</div>' +
+      '<label class="pile-ajout" for="admFileInput">Ajouter un fichier</label>' +
+      '<input type="file" id="admFileInput" accept=".csv,text/csv">' +
+      '<small class="hint">L\'ordre de la pile départage les fichiers qui occupent la même case : ' +
+        'le premier passe avant. Réimporter un fichier déjà présent le met à jour sans changer sa place.</small>' +
+      '<div id="adminStatus"></div>' +
+    '</div>';
+  }
+
+  // Redessine la seule pile : le message d'import et le repli des réglages
+  // avancés survivent au réordonnancement.
+  function refreshPileFichiers() {
+    var wrap = document.getElementById("pileFichiersWrap");
+    if (!wrap) { renderAdmin(); return; }
+    wrap.innerHTML = fichiersPileHTML();
+    bindPileFichiers();
+  }
+
   function renderAdmin() {
     var s = S.getSettings();
+    var multi = s.multiTournees === true;
     els.adminBody.innerHTML =
       '<section class="admin-section">' +
         '<h2 class="admin-section-title">Import des données</h2>' +
@@ -2235,11 +2310,7 @@ window.UI = (function () {
           '<label class="admin-step-title" for="admIdTournee"><span class="admin-step-num">1</span>Identifiant de tournée</label>' +
           '<input type="text" id="admIdTournee" value="' + escapeHtml(S.getIdTournee()) + '">' +
         '</div>' +
-        '<div class="field admin-step">' +
-          '<label class="admin-step-title" for="admFileInput"><span class="admin-step-num">2</span>Import du fichier</label>' +
-          '<input type="file" id="admFileInput" accept=".csv,text/csv">' +
-          '<div id="adminStatus"></div>' +
-        '</div>' +
+        etapeFichiersHTML(multi) +
         '<div class="field admin-step">' +
           '<div class="admin-step-title"><span class="admin-step-num">3</span>Construction de la trace</div>' +
           '<div class="toolbar">' +
@@ -2271,6 +2342,7 @@ window.UI = (function () {
         '<label class="switch-row"><input type="checkbox" id="admGeocodage" ' + (s.geocodageActif ? "checked" : "") + '> Activer le géocodage automatique (API adresse gouvernementale)</label>' +
         '<label class="switch-row"><input type="checkbox" id="admScan" ' + (s.scanActif !== false ? "checked" : "") + '> Scan d\'étiquette par la caméra (expérimental)</label>' +
         '<label class="switch-row"><input type="checkbox" id="admFleches" ' + (s.flechesSens !== false ? "checked" : "") + '> Flèches de sens sur la trace (au zoom rapproché)</label>' +
+        '<label class="switch-row"><input type="checkbox" id="admMulti" ' + (multi ? "checked" : "") + '> Gérer plusieurs fichiers de tournée (empilement)</label>' +
         '<div class="toolbar">' +
           '<button data-action="admin-sample">Charger un exemple</button>' +
           '<button class="danger" data-action="admin-clear">Vider les données</button>' +
@@ -2336,19 +2408,30 @@ window.UI = (function () {
     document.getElementById("admFileInput").addEventListener("change", function (ev) {
       var file = ev.target.files[0];
       if (!file) return;
+      // Empilement actif : le fichier s'ajoute à ceux déjà chargés. Sinon il
+      // remplace la base, comme il l'a toujours fait.
+      var multi = S.getSettings().multiTournees === true;
+      var avant = etatEmpilement();
       var reader = new FileReader();
       reader.onload = function () {
-        var res = S.importFromCSV(String(reader.result));
+        var res = S.importFromCSV(String(reader.result), {
+          mode: multi ? "ajouter" : "remplacer",
+          nomFichier: file.name
+        });
         if (!res.ok) { showAdminStatus("err", res.message); return; }
-        var msg = "Import : " + res.count + " ligne(s).";
+        var msg = (multi ? "Fichier « " + res.idFichier + " » : " : "Import : ") + res.count + " ligne(s)";
+        msg += multi ? " · " + res.total + " au total." : ".";
         if (res.missingCols.length) msg += " Colonnes absentes : " + res.missingCols.join(", ") + ".";
         if (res.errors.length) msg += " " + res.errors.length + " erreur(s).";
         if (res.warnings.length) msg += " " + res.warnings.length + " avertissement(s).";
         showAdminStatus(res.errors.length ? "err" : (res.warnings.length ? "warn" : "ok"), msg);
+        suivreEmpilementDansLaPreparation(avant);
+        refreshPileFichiers();
         casierIndex = 0;
         prepZoneIndex = 0;
         refreshCommuneColors();
         renderSearch();
+        renderPrep();
         // La trace de la tournée se construit ici, au chargement des données,
         // et se met en cache : les jours suivants n'y reviennent pas.
         Parcours.viderCacheRoute();
@@ -2368,7 +2451,142 @@ window.UI = (function () {
       S.setSetting("flechesSens", e.target.checked);
       Parcours.rafraichirAffichage();
     });
+    document.getElementById("admMulti").addEventListener("change", function (e) {
+      basculerMultiTournees(e.target);
+    });
+    bindPileFichiers();
     bindCommuneColorEvents();
+  }
+
+  // ---------------------------------------------------------------------
+  // Empilement des fichiers de tournée
+  // ---------------------------------------------------------------------
+  //
+  // Une case de casier se nomme par sa seule position tant qu'un fichier est
+  // chargé, et par sa position et son fichier dès qu'ils sont plusieurs. Les
+  // zones de courrier standard déjà retenues sont renommées avec elle : passer
+  // d'un fichier à deux — ou revenir — ne doit pas effacer une préparation déjà
+  // faite.
+  function etatEmpilement() {
+    return { actif: S.multiActif(), fichiers: S.getFichiers() };
+  }
+
+  function suivreEmpilementDansLaPreparation(avant) {
+    var actif = S.multiActif();
+    if (avant.actif === actif) return;
+    var idT = S.getIdTournee();
+    if (actif) {
+      var origine = avant.fichiers[0];
+      if (!origine) return;
+      Prep.remapZonesStandard(idT, function (cle) {
+        return cle.indexOf("@") === -1 ? cle + "@" + origine.id : cle;
+      });
+    } else {
+      // Retour au fichier unique : seules les zones du fichier qui reste ont
+      // encore une case à désigner. Celles des fichiers partis s'en vont avec
+      // eux, sinon elles retiendraient les cases du survivant à sa place.
+      var reste = S.getFichiers()[0];
+      Prep.remapZonesStandard(idT, function (cle) {
+        var i = cle.indexOf("@");
+        if (i === -1) return cle;
+        return (reste && cle.slice(i + 1) === reste.id) ? cle.slice(0, i) : "";
+      });
+    }
+  }
+
+  // Après un changement de pile — ajout, retrait, réordonnancement — l'ordre de
+  // passage a bougé : le cache de routage ne décrit plus la tournée.
+  function apresChangementDePile(avant) {
+    suivreEmpilementDansLaPreparation(avant);
+    casierIndex = 0;
+    prepZoneIndex = 0;
+    tourneeIndex = 0;
+    Parcours.viderCacheRoute();
+    renderSearch();
+    renderPrep();
+    renderSuivi();
+  }
+
+  // Le drapeau ne se baisse pas en silence sur une pile de plusieurs fichiers :
+  // hors empilement, l'application ne sait porter qu'un fichier, et deux
+  // fichiers laissés là verraient leurs cases se confondre. On dit ce qu'on
+  // garde, et on attend la réponse.
+  function basculerMultiTournees(checkbox) {
+    var avant = etatEmpilement();
+    if (!checkbox.checked && avant.fichiers.length > 1) {
+      var garde = avant.fichiers[0];
+      var perdus = avant.fichiers.length - 1;
+      if (!confirmAction(
+            "Sans empilement, la tournée ne porte qu'un fichier.\n\n" +
+            "Garder « " + garde.id + " » et retirer " + perdus + " autre(s) fichier(s) ?")) {
+        checkbox.checked = true;
+        return;
+      }
+      avant.fichiers.slice(1).forEach(function (f) { S.retirerFichier(f.id); });
+    }
+    S.setSetting("multiTournees", checkbox.checked);
+    apresChangementDePile(avant);
+    renderAdmin();
+  }
+
+  function deplacerFichierDansLaPile(id, delta) {
+    if (!S.deplacerFichier(id, delta)) return;
+    apresChangementDePile(etatEmpilement());
+    refreshPileFichiers();
+  }
+
+  function retirerFichierDeLaPile(id) {
+    var avant = etatEmpilement();
+    if (!confirmAction("Retirer le fichier « " + id + " » et toutes ses adresses de la tournée ?")) return;
+    var perdues = S.retirerFichier(id);
+    showAdminStatus("ok", "Fichier « " + id + " » retiré : " + perdues + " adresse(s).");
+    apresChangementDePile(avant);
+    refreshCommuneColors();
+    refreshPileFichiers();
+  }
+
+  // Glisser-déposer : l'élément survolé se décale, et le lâcher fixe l'ordre
+  // affiché. Les flèches font le même travail sans souris — les deux passent
+  // par setOrdreFichiers, il n'y a qu'un seul ordre.
+  var pileDragId = null;
+
+  function bindPileFichiers() {
+    var liste = document.getElementById("pileFichiers");
+    if (!liste) return;
+    liste.querySelectorAll(".pile-item").forEach(function (item) {
+      item.addEventListener("dragstart", function (ev) {
+        pileDragId = item.getAttribute("data-id");
+        item.classList.add("pile-drag");
+        try { ev.dataTransfer.effectAllowed = "move"; ev.dataTransfer.setData("text/plain", pileDragId); } catch (e) { /* ignore */ }
+      });
+      item.addEventListener("dragend", function () {
+        item.classList.remove("pile-drag");
+        pileDragId = null;
+        liste.querySelectorAll(".pile-item").forEach(function (el) { el.classList.remove("pile-cible"); });
+      });
+      item.addEventListener("dragover", function (ev) {
+        if (!pileDragId || item.getAttribute("data-id") === pileDragId) return;
+        ev.preventDefault();
+        try { ev.dataTransfer.dropEffect = "move"; } catch (e) { /* ignore */ }
+        item.classList.add("pile-cible");
+      });
+      item.addEventListener("dragleave", function () { item.classList.remove("pile-cible"); });
+      item.addEventListener("drop", function (ev) {
+        ev.preventDefault();
+        item.classList.remove("pile-cible");
+        var glisse = pileDragId;
+        var cible = item.getAttribute("data-id");
+        if (!glisse || glisse === cible) return;
+        var ordre = S.getFichiers().map(function (f) { return f.id; });
+        var depuis = ordre.indexOf(glisse);
+        if (depuis !== -1) ordre.splice(depuis, 1);
+        var vers = ordre.indexOf(cible);
+        ordre.splice(vers === -1 ? ordre.length : vers, 0, glisse);
+        S.setOrdreFichiers(ordre);
+        apresChangementDePile(etatEmpilement());
+        refreshPileFichiers();
+      });
+    });
   }
 
   function bindCommuneColorEvents() {
@@ -2456,23 +2674,40 @@ window.UI = (function () {
       case "admin-construire-trace":
         construireTraceDepuisAdmin();
         break;
+      case "fichier-monter":
+        deplacerFichierDansLaPile(actionEl.getAttribute("data-id"), -1);
+        break;
+      case "fichier-descendre":
+        deplacerFichierDansLaPile(actionEl.getAttribute("data-id"), 1);
+        break;
+      case "fichier-retirer":
+        retirerFichierDeLaPile(actionEl.getAttribute("data-id"));
+        break;
       case "admin-sample":
         if (S.getRows().length && !confirmAction("Remplacer les données actuelles par l'exemple ?")) return;
+        var avantExemple = etatEmpilement();
         var res = S.importFromCSV(SAMPLE_CSV);
         showAdminStatus("ok", "Exemple chargé (" + res.count + " lignes).");
         casierIndex = 0;
         prepZoneIndex = 0;
+        suivreEmpilementDansLaPreparation(avantExemple);
         refreshCommuneColors();
+        refreshPileFichiers();
         renderSearch();
+        renderPrep();
         break;
       case "admin-clear":
         if (!confirmAction("Vider toutes les données locales ? Pense à exporter avant si besoin.")) return;
+        var avantVidage = etatEmpilement();
         S.setRows([]);
         showAdminStatus("ok", "Données vidées.");
         casierIndex = 0;
         prepZoneIndex = 0;
+        suivreEmpilementDansLaPreparation(avantVidage);
         refreshCommuneColors();
+        refreshPileFichiers();
         renderSearch();
+        renderPrep();
         break;
       case "open-admin":
         openAdmin();

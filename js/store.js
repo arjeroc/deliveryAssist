@@ -30,9 +30,16 @@ window.Store = (function () {
   var state = {
     rows: [],
     idTournee: "tm002",
+    // Empilement des fichiers de tournée, dans l'ordre voulu par l'utilisateur :
+    // [{ id, nom, count, importeLe }]. Un seul fichier la plupart du temps.
+    fichiers: [],
     settings: {
       geocodageActif: true,
       communeColors: {},
+      // Plusieurs fichiers de tournée empilés dans une même tournée. Hors de ce
+      // drapeau, l'application ne connaît qu'un fichier et se comporte
+      // exactement comme avant.
+      multiTournees: false,
       // Scan d'étiquette : expérimental, désactivable si la lecture déçoit.
       scanActif: true,
       // Flèches de sens sur la trace : actives par défaut. C'est le seul
@@ -237,6 +244,119 @@ window.Store = (function () {
     return hasCasier(row) ? ("C" + Number(row.casier_c) + "L" + Number(row.casier_l)) : "";
   }
 
+  // --- fichiers de tournée empilés ------------------------------------------
+  //
+  // Une tournée peut se composer de plusieurs fichiers — tm0, tm1… — apportant
+  // chacun sa propre grille de casier. Deux fichiers posant chacun une C1L1
+  // décrivent deux cases réelles distinctes : elles ne se fondent jamais l'une
+  // dans l'autre, même adresse pour adresse. Ce qui les départage est l'ordre
+  // d'empilement choisi par l'utilisateur, et lui seul.
+  //
+  // Tant qu'un seul fichier est chargé — le cas courant, et le seul que connaît
+  // l'application drapeau baissé — tout ce mécanisme reste transparent : le rang
+  // de fichier est constant, le discriminant vide, et l'ordre comme les clés de
+  // regroupement sont mot pour mot ceux d'avant.
+  function multiActif() {
+    return state.settings.multiTournees === true && state.fichiers.length > 1;
+  }
+
+  function indexFichier(id) {
+    for (var i = 0; i < state.fichiers.length; i++) {
+      if (state.fichiers[i].id === id) return i;
+    }
+    return -1;
+  }
+
+  // Rang d'empilement : la place du fichier dans la pile. Un fichier inconnu
+  // ferme la marche plutôt que de s'inviter en tête.
+  function rangFichier(row) {
+    if (!multiActif()) return 0;
+    var i = indexFichier(row.id_tournee || "");
+    return i === -1 ? state.fichiers.length : i;
+  }
+
+  // Discriminant à coller aux clés de regroupement. Vide hors empilement : les
+  // clés existantes — et les préparations déjà enregistrées sous ces clés — ne
+  // bougent pas d'un caractère.
+  function cleFichier(row) {
+    return multiActif() ? (row.id_tournee || "?") : "";
+  }
+
+  function suffixeFichier(row) {
+    var f = cleFichier(row);
+    return f ? "@" + f : "";
+  }
+
+  // Étiquette d'une case telle qu'elle se lit à l'écran : "C1L1" seule, ou
+  // "C1L1 · tm1" quand plusieurs fichiers se disputent la position.
+  function casierLabelEtape(row) {
+    return casierLabel(row) + (cleFichier(row) ? " · " + cleFichier(row) : "");
+  }
+
+  // La liste des fichiers se relit toujours dans les données : une adresse
+  // supprimée, un import qui remplace tout, et l'empilement doit suivre. Seul
+  // l'ordre voulu par l'utilisateur ne se recalcule pas — il se conserve pour
+  // les fichiers encore présents, les nouveaux venus s'ajoutant à la suite.
+  function syncFichiers() {
+    var comptes = {}, ordreVu = [];
+    state.rows.forEach(function (r) {
+      var id = r.id_tournee || "";
+      if (comptes[id] === undefined) { comptes[id] = 0; ordreVu.push(id); }
+      comptes[id] += 1;
+    });
+    var connus = {};
+    state.fichiers.forEach(function (f) { connus[f.id] = true; });
+    var suite = state.fichiers.filter(function (f) { return comptes[f.id] !== undefined; });
+    ordreVu.forEach(function (id) {
+      if (!connus[id]) suite.push({ id: id, nom: "", importeLe: new Date().toISOString() });
+    });
+    suite.forEach(function (f) { f.count = comptes[f.id] || 0; });
+    state.fichiers = suite;
+  }
+
+  function getFichiers() {
+    return state.fichiers.map(function (f) {
+      return { id: f.id, nom: f.nom || "", count: f.count || 0, importeLe: f.importeLe || "" };
+    });
+  }
+
+  // Réordonne la pile. Les identifiants inconnus sont ignorés et ceux qui
+  // manquent à l'appel restent à la fin : un ordre partiel ne fait pas
+  // disparaître un fichier de la tournée.
+  function setOrdreFichiers(ids) {
+    var restants = state.fichiers.slice();
+    var suite = [];
+    (ids || []).forEach(function (id) {
+      var i = -1;
+      restants.forEach(function (f, k) { if (i === -1 && f.id === id) i = k; });
+      if (i !== -1) suite.push(restants.splice(i, 1)[0]);
+    });
+    state.fichiers = suite.concat(restants);
+    persist();
+  }
+
+  // Déplacement d'un cran, pour les pouces : le glisser-déposer sert la souris,
+  // ces deux flèches servent tout le monde.
+  function deplacerFichier(id, delta) {
+    var i = indexFichier(id);
+    if (i === -1) return false;
+    var j = i + delta;
+    if (j < 0 || j >= state.fichiers.length) return false;
+    var f = state.fichiers.splice(i, 1)[0];
+    state.fichiers.splice(j, 0, f);
+    persist();
+    return true;
+  }
+
+  // Retire un fichier de la tournée : ses adresses avec lui, sinon la pile
+  // mentirait sur ce que la base contient encore.
+  function retirerFichier(id) {
+    var avant = state.rows.length;
+    state.rows = state.rows.filter(function (r) { return (r.id_tournee || "") !== id; });
+    persist();
+    return avant - state.rows.length;
+  }
+
   // "LIMOGES (Le Mas de…)" — le lieu-dit reste secondaire, entre parenthèses,
   // pour situer sans prendre le pas sur la commune.
   function communeLabel(commune, lieuDit) {
@@ -287,9 +407,12 @@ window.Store = (function () {
   // --- ordre de la tournée (source de vérité) --------------------------------
 
   // L'ordre de préparation est celui du casier, lu comme une grille :
-  // C1L1 → C1L2 → … → C1L5 → C2L1 → … → C5L5. ordre_zone puis ordre_rue
-  // départagent à l'intérieur d'une même case, et l'ordre du fichier tranche en
-  // dernier recours. Les adresses hors casier ferment la marche.
+  // C1L1 → C1L2 → … → C1L5 → C2L1 → … → C5L5. Quand plusieurs fichiers sont
+  // empilés, leur ordre départage les positions qu'ils occupent tous les deux :
+  // pile tm1 puis tm0, et toute C1L1 de tm1 passe avant toute C1L1 de tm0.
+  // ordre_zone puis ordre_rue départagent ensuite à l'intérieur d'une même case,
+  // et l'ordre du fichier tranche en dernier recours. Les adresses hors casier
+  // ferment la marche.
   //
   // Cet ordre appartient aux données, pas à la carte : la cartographie s'y
   // conforme, elle ne le recalcule jamais. C'est ici, et nulle part ailleurs,
@@ -299,7 +422,8 @@ window.Store = (function () {
   }
 
   function rangTournee(row) {
-    return [ordreNum(row.casier_c), ordreNum(row.casier_l), ordreNum(row.ordre_zone), ordreNum(row.ordre_rue)];
+    return [ordreNum(row.casier_c), ordreNum(row.casier_l), rangFichier(row),
+            ordreNum(row.ordre_zone), ordreNum(row.ordre_rue)];
   }
 
   function compareTournee(a, b) {
@@ -325,18 +449,26 @@ window.Store = (function () {
   // Découpage de la tournée en cases de casier, dans l'ordre de la grille.
   // Une case = un paquet préparé ensemble : c'est l'unité que le livreur
   // reconnaît en ouvrant son casier, donc l'unité de contrôle des données.
+  //
+  // Deux fichiers empilés sur la même position tiennent deux étapes : la case
+  // du casier de tm1 et celle de tm0 sont deux paquets réels, préparés
+  // séparément. Elles se suivent dans l'ordre de la pile, elles ne fusionnent
+  // pas.
   function etapesCasier(list) {
     var ordonnees = rowsOrdreTournee(list);
     var out = [];
     ordonnees.forEach(function (r) {
-      var cle = hasCasier(r) ? casierCle(r) : "hors";
+      var base = hasCasier(r) ? casierCle(r) : "hors";
+      var cle = base + suffixeFichier(r);
       var dernier = out[out.length - 1];
       if (!dernier || dernier.cle !== cle) {
         dernier = {
           cle: cle,
-          label: cle === "hors" ? "Hors casier" : cle,
-          c: cle === "hors" ? null : Number(r.casier_c),
-          l: cle === "hors" ? null : Number(r.casier_l),
+          label: (base === "hors" ? "Hors casier" : base) +
+                 (cleFichier(r) ? " · " + cleFichier(r) : ""),
+          fichier: cleFichier(r),
+          c: base === "hors" ? null : Number(r.casier_c),
+          l: base === "hors" ? null : Number(r.casier_l),
           rows: []
         };
         out.push(dernier);
@@ -353,13 +485,20 @@ window.Store = (function () {
   // standard : le livreur reconnaît une ligne de casier à ses deux extrémités
   // bien plus vite qu'à l'énumération de tout ce qu'elle contient. Les adresses
   // hors casier n'y figurent pas — elles appartiennent à une autre tournée.
+  //
+  // Une case dont deux fichiers se disputent la position donne deux lignes,
+  // portant chacune son fichier : le livreur a bien deux paquets devant lui, et
+  // chacun se retient — ou se relâche — pour lui-même.
   function casierColonnes() {
     var cases = {}, ordreCases = [];
     rowsOrdreTournee().forEach(function (r) {
       if (!hasCasier(r)) return;
-      var cle = casierCle(r);
+      var cle = casierCle(r) + suffixeFichier(r);
       if (!cases[cle]) {
-        cases[cle] = { cle: cle, c: Number(r.casier_c), l: Number(r.casier_l), rows: [] };
+        cases[cle] = {
+          cle: cle, c: Number(r.casier_c), l: Number(r.casier_l),
+          fichier: cleFichier(r), rows: []
+        };
         ordreCases.push(cle);
       }
       cases[cle].rows.push(r);
@@ -494,7 +633,24 @@ window.Store = (function () {
     return lines.join("\n");
   }
 
-  function importFromCSV(text) {
+  // Identifiant du fichier importé : celui que porte la colonne id_tournee, à
+  // défaut le nom du fichier, à défaut la tournée courante. C'est cette
+  // étiquette qui distinguera ensuite ses cases de celles des autres fichiers.
+  function identifiantFichier(imported, nomFichier) {
+    var vu = imported.map(function (r) { return (r.id_tournee || "").trim(); }).filter(Boolean)[0];
+    if (vu) return vu;
+    var stem = String(nomFichier || "").replace(/\.[^.]+$/, "").trim();
+    return stem || state.idTournee;
+  }
+
+  // options : { mode: "remplacer" | "ajouter", nomFichier: "tm1.csv" }
+  //
+  // « remplacer » est le comportement historique et reste celui par défaut : le
+  // fichier importé devient la base. « ajouter » empile un fichier de plus sur
+  // ceux déjà chargés, sans toucher aux leurs.
+  function importFromCSV(text, options) {
+    options = options || {};
+    var ajouter = options.mode === "ajouter";
     var table = parseCSV(text);
     if (table.length === 0) return { ok: false, message: "Fichier vide ou illisible." };
     var header = table[0].map(function (h) { return h.trim(); });
@@ -514,13 +670,53 @@ window.Store = (function () {
       imported.push(obj);
     }
 
+    var idFichier = identifiantFichier(imported, options.nomFichier);
+    // Un fichier muet sur son id_tournee reçoit celui qu'on vient de lui
+    // trouver : sans étiquette, ses cases se confondraient avec celles du
+    // voisin de pile.
+    imported.forEach(function (r) { if (!r.id_tournee) r.id_tournee = idFichier; });
+
+    if (ajouter) {
+      // Réimporter un fichier déjà empilé le met à jour : il reprend sa place
+      // dans la pile plutôt que d'y figurer deux fois.
+      state.rows = state.rows.filter(function (r) { return (r.id_tournee || "") !== idFichier; });
+    }
+
     var result = validateRows(imported);
-    state.rows = imported;
+
+    if (ajouter) {
+      // Les identifiants de ligne se croisent d'un fichier à l'autre : chacun a
+      // été numéroté chez lui. Un doublon est réattribué ici, sans quoi une
+      // adresse en masquerait une autre dans toute l'application.
+      var pris = {};
+      state.rows.forEach(function (r) { pris[r.id] = true; });
+      var collisions = 0;
+      imported.forEach(function (r) {
+        if (pris[r.id]) { r.id = uid(); collisions += 1; }
+        pris[r.id] = true;
+      });
+      if (collisions) {
+        result.warnings.push(collisions + " identifiant(s) de ligne en conflit avec un autre fichier : renumérotés.");
+      }
+      state.rows = state.rows.concat(imported);
+    } else {
+      state.rows = imported;
+      state.fichiers = [];
+    }
+
+    syncFichiers();
+    var fiche = state.fichiers.filter(function (f) { return f.id === idFichier; })[0];
+    if (fiche) {
+      fiche.nom = options.nomFichier || fiche.nom || "";
+      fiche.importeLe = new Date().toISOString();
+    }
     persist();
 
     return {
       ok: true,
       count: imported.length,
+      idFichier: idFichier,
+      total: state.rows.length,
       missingCols: missingCols,
       extraCols: extraCols,
       errors: result.errors,
@@ -539,9 +735,16 @@ window.Store = (function () {
   function persist() {
     // Toute écriture invalide l'index : il sera reconstruit à la recherche suivante.
     invalidateIndex();
+    // Toute écriture recale aussi la pile des fichiers : une adresse ajoutée ou
+    // supprimée peut faire naître ou disparaître un fichier de la tournée, et
+    // aucun appelant n'a à y penser.
+    syncFichiers();
     try {
       localStorage.setItem(DATA_KEY, JSON.stringify(state.rows));
-      localStorage.setItem(META_KEY, JSON.stringify({ idTournee: state.idTournee }));
+      localStorage.setItem(META_KEY, JSON.stringify({
+        idTournee: state.idTournee,
+        fichiers: state.fichiers
+      }));
       localStorage.setItem(SETTINGS_KEY, JSON.stringify(state.settings));
     } catch (e) { /* stockage indisponible : on continue sans persister */ }
   }
@@ -580,6 +783,9 @@ window.Store = (function () {
         if (meta) {
           var m = JSON.parse(meta);
           if (m && m.idTournee) state.idTournee = m.idTournee;
+          // L'ordre d'empilement est un choix de l'utilisateur : il traverse le
+          // rechargement comme le reste de la tournée.
+          if (m && Array.isArray(m.fichiers)) state.fichiers = m.fichiers;
         }
       } else {
         migrateFromV1();
@@ -595,6 +801,9 @@ window.Store = (function () {
         }
       }
     } catch (e) { state.rows = []; }
+    // Un stockage antérieur à l'empilement ne porte aucune pile : elle se
+    // reconstruit ici à partir des adresses déjà là.
+    syncFichiers();
   }
 
   // --- couleurs par commune (configurables, avec une valeur par défaut stable) ---
@@ -1026,7 +1235,17 @@ window.Store = (function () {
     SCORE_SUR: SCORE_SUR,
     hasCasier: hasCasier,
     casierLabel: casierLabel,
+    casierLabelEtape: casierLabelEtape,
     casierCle: casierCle,
+
+    multiActif: multiActif,
+    cleFichier: cleFichier,
+    suffixeFichier: suffixeFichier,
+    getFichiers: getFichiers,
+    setOrdreFichiers: setOrdreFichiers,
+    deplacerFichier: deplacerFichier,
+    retirerFichier: retirerFichier,
+
     positionInfo: positionInfo,
     isStopPub: isStopPub,
     compareTournee: compareTournee,
