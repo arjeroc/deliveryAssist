@@ -35,9 +35,10 @@ window.Store = (function () {
       communeColors: {},
       // Scan d'étiquette : expérimental, désactivable si la lecture déçoit.
       scanActif: true,
-      // Pastilles d'adresses sur la carte : masquées par défaut, la trace du
-      // parcours se lisant beaucoup mieux sans elles.
-      afficherAdressesCarte: false
+      // Flèches de sens sur la trace : actives par défaut. C'est le seul
+      // élément que la carte des Données pose par-dessus le trait, et il dit la
+      // seule chose qu'un trait ne sait pas dire — dans quel sens on le suit.
+      flechesSens: true
     }
   };
 

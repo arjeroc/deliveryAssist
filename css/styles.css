@@ -217,7 +217,15 @@ mark{background:#fff2a8;color:inherit;border-radius:3px;padding:0 1px;}
 
 .tournee-card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;touch-action:pan-y;}
 .tournee-card-head{display:flex;align-items:center;gap:8px;}
-.tournee-card-title{font-size:17px;font-weight:700;}
+.tournee-card-title{font-size:17px;font-weight:700;flex:1;min-width:0;}
+/* La case de casier, affichée sur la card : c'est elle qui fait l'étape, donc
+   c'est elle qui distingue deux passages d'une même rue. Même pastille verte
+   que dans les Données — on doit reconnaître C3L4 d'un onglet à l'autre. */
+.tournee-casier{
+  flex:0 0 auto;font-size:11.5px;font-weight:800;letter-spacing:.04em;color:var(--accent);
+  background:#e6f2ea;border-radius:8px;padding:3px 8px;font-variant-numeric:tabular-nums;
+}
+.tournee-casier.hors{color:var(--muted);background:var(--chip);letter-spacing:0;}
 .tournee-card-sub{font-size:12.5px;color:var(--muted);margin:2px 0 10px;}
 .tournee-card-figures{font-size:13px;color:var(--muted);margin-bottom:10px;}
 
@@ -239,11 +247,51 @@ mark{background:#fff2a8;color:inherit;border-radius:3px;padding:0 1px;}
 .stepper-value.multi{color:var(--accent);font-size:19px;}
 .addr-motif{font-size:11.5px;color:var(--warn);}
 
-/* zone de distribution standard : rien à valider, seulement s'y rendre */
+/* --- distribution standard : une autre nature de tâche, donc une autre carte
+   Un objet suivi se compte et se dépose chez quelqu'un ; le courrier standard
+   se dessert, par numéros. Le bloc ne reprend donc rien du dessin des objets
+   suivis — fond crème, liseré pointillé, numéros en pastilles, validation
+   brune et non verte — pour qu'on voie en une fraction de seconde qu'on ne lit
+   pas la même chose. */
 .tournee-card.zone-standard{background:#fbfbfa;}
-.zone-standard-line{display:flex;align-items:center;gap:8px;margin-top:4px;}
-.zone-autres{font-size:11.5px;color:var(--muted);margin-top:8px;font-style:italic;}
 .zone-nav{margin-left:auto;flex:0 0 auto;}
+
+.std-bloc{
+  margin-top:12px;background:#fbf7ee;
+  border:1px dashed #d8ccae;border-left:4px solid #c2a367;border-radius:12px;padding:12px;
+}
+.std-bloc.est-fait{background:#f4f6f2;border-color:#d5dbd2;border-left-color:var(--accent);}
+.std-entete{display:flex;align-items:center;gap:10px;}
+.std-pastille{font-size:20px;line-height:1;flex:0 0 auto;}
+.std-titre{flex:1;min-width:0;font-size:14px;font-weight:800;}
+.std-sous{font-size:11.5px;font-weight:600;color:var(--muted);margin-top:2px;}
+.std-sous.est-ok{color:var(--accent);}
+.std-sous.est-ko{color:var(--err);}
+.std-compte{
+  flex:0 0 auto;font-size:15px;font-weight:800;color:#7a5c2e;
+  background:#f1e6cd;border-radius:999px;padding:3px 11px;font-variant-numeric:tabular-nums;
+}
+.std-bloc.est-fait .std-compte{color:var(--accent);background:#e6f2ea;}
+
+/* les numéros à desservir : ce que l'œil cherche en arrivant devant la rue */
+.std-numeros{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0 2px;max-height:132px;overflow-y:auto;}
+.std-num{
+  font-size:13px;font-weight:700;line-height:1;padding:6px 9px;border-radius:8px;
+  background:#fff;border:1px solid #e3d8bd;color:var(--ink);font-variant-numeric:tabular-nums;
+}
+.std-num.sans-numero{color:var(--muted);font-style:italic;}
+.std-num.is-distribue{background:#e9f4ee;border-color:#bcdcc9;color:var(--accent);text-decoration:line-through;}
+.std-num.is-abandonne{background:var(--err-bg);border-color:#eec5c0;color:var(--err);}
+
+.std-actions{display:flex;gap:8px;margin-top:12px;}
+.std-btn{
+  flex:1;padding:12px 8px;border-radius:10px;border:1px dashed #c2a367;background:#fff;
+  font-weight:700;font-size:14px;color:var(--ink);cursor:pointer;
+}
+.std-btn.ok{flex:2;background:#7a5c2e;border:1px solid #7a5c2e;color:#fff;}
+.std-btn.stop{color:var(--warn);}
+.std-btn.reopen{color:var(--muted);border-style:solid;border-color:var(--line);}
+.std-btn:active{opacity:.85;}
 
 /* --- doublon d'adresse détecté à la saisie --- */
 .dup-notice{background:var(--info-bg);border:1px solid #c8ddef;border-radius:10px;padding:10px 12px;margin:4px 0 10px;}
@@ -354,7 +402,7 @@ mark{background:#fff2a8;color:inherit;border-radius:3px;padding:0 1px;}
 .pc-btn{border:1px solid var(--line);background:#fff;border-radius:8px;padding:7px 11px;font-size:12.5px;font-weight:700;color:var(--accent);cursor:pointer;}
 .pc-btn:active{background:#eef1ec;}
 
-/* repères posés sur la carte */
+/* Le seul élément posé sur la trace : le sens de parcours. */
 /* Sens de parcours : un chevron plein posé sur le trait, tourné par le cap.
    Le triangle est fait de bordures — pas d'image à charger, et sa couleur suit
    celle du tronçon, donc la fiabilité de la trace. Le liseré blanc le détache
@@ -365,18 +413,6 @@ mark{background:#fff2a8;color:inherit;border-radius:3px;padding:0 1px;}
   border-bottom:9px solid var(--accent);
   filter:drop-shadow(0 0 1px #fff) drop-shadow(0 0 1px #fff);
 }
-.pc-borne{
-  width:30px;height:30px;border-radius:50%;color:#fff;font-size:14px;font-weight:800;
-  display:flex;align-items:center;justify-content:center;border:2px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,.4);
-}
-.pc-depart{background:var(--accent);}
-.pc-arrivee{background:var(--err);}
-.pc-commune{width:16px;height:16px;border-radius:50%;background:#fff;border:3px solid var(--ink);box-shadow:0 1px 3px rgba(0,0,0,.3);}
-
-.pc-popup{font-size:13px;line-height:1.45;}
-.pc-popup-meta{color:#6b7268;font-size:12px;}
-.pc-popup-prec{font-size:11px;font-weight:700;}
-.pc-popup-liste{margin-top:6px;padding-top:6px;border-top:1px dashed #dfe2dc;font-size:12px;max-height:150px;overflow-y:auto;}
 
 /* --- Données → Carte : parcours des cases du casier ---
    Contrôle de cohérence : on lit la tournée telle qu'elle a été préparée,
@@ -546,7 +582,7 @@ details.advanced summary{font-size:12.5px;color:var(--accent);cursor:pointer;fon
 .hint{display:block;color:var(--muted);font-size:11.5px;margin-top:8px;}
 hr{border:none;border-top:1px solid var(--line);margin:14px 0;}
 
-.status{font-size:12.5px;border-radius:8px;padding:9px 10px;margin-top:8px;white-space:pre-wrap;}
+.status{font-size:12.5px;border-radius:8px;padding:9px 10px;margin-top:8px;white-space:pre-wrap;background:var(--chip);color:var(--muted);}
 .status.ok{background:#e9f4ee;color:var(--accent);}
 .status.warn{background:var(--warn-bg);color:var(--warn);}
 .status.err{background:var(--err-bg);color:var(--err);}

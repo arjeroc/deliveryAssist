@@ -14,6 +14,12 @@
      fusionnées pour le tracé, faute de quoi la trace ferait des allers-retours
      absurdes sur le clocher du village.
 
+   La carte ne porte plus que la trace et, si le réglage le demande, ses
+   flèches de sens. Aucun point, aucun repère, aucune pastille : un marqueur de
+   plus sur une tournée de quatre cents boîtes, c'est quatre cents marqueurs, et
+   la forme du parcours — la seule chose que cette carte donne à lire —
+   disparaît dessous. Le détail d'une adresse se consulte dans les Données.
+
    Module autonome : il dessine ses propres calques sur l'instance Leaflet
    existante et ne modifie aucun comportement de mapview.js.
    ========================================================================== */
@@ -23,14 +29,13 @@ window.Parcours = (function () {
   var PREC_KEY = "atournee_geoprec_v1";  // précision du géocodage, par adresse
   var ROUTE_KEY = "atournee_route_v1";   // trace routière mise en cache
 
-  // Seuils de zoom des niveaux de lecture.
+  // En deçà de ce zoom, les flèches se chevauchent plus qu'elles n'informent.
   var ZOOM_FLECHES = 13;
 
   // Longueur minimale d'un tronçon pour mériter un chevron de sens. Sans ce
   // seuil, les cent cinquante tronçons d'une vraie tournée poseraient autant de
   // chevrons, et la trace disparaîtrait sous ses propres flèches.
   var FLECHE_MIN_M = 150;
-  var ZOOM_ADRESSES = 15;
 
   // Deux ancres plus proches que ça sont considérées comme un même lieu.
   var FUSION_M = 40;
@@ -394,44 +399,13 @@ window.Parcours = (function () {
     if (!v) {
       v = {
         map: carte,
-        calques: {
-          trace: L.layerGroup(), fleches: L.layerGroup(),
-          communes: L.layerGroup(), adresses: L.layerGroup()
-        }
+        calques: { trace: L.layerGroup(), fleches: L.layerGroup() }
       };
       carte.on("zoomend", function () { appliquerZoom(v); });
       vues.push(v);
     }
     v.leger = !!options.leger;
-    v.onSelect = options.onSelect || null;
     return v;
-  }
-
-  function icone(html, classe, taille) {
-    return L.divIcon({ className: "", html: '<div class="' + classe + '">' + html + '</div>',
-      iconSize: [taille, taille], iconAnchor: [taille / 2, taille / 2] });
-  }
-
-  function esc(s) {
-    return (s || "").toString().replace(/[&<>"]/g, function (c) {
-      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c];
-    });
-  }
-
-  function popupEtape(e, total) {
-    var noms = e.adresses.slice(0, 8).map(function (r) {
-      return esc((r.numero ? r.numero + " — " : "") + (S.namesOf(r).join(" / ") || "(sans nom)"));
-    });
-    var reste = e.adresses.length - noms.length;
-    return '<div class="pc-popup">' +
-      '<strong>' + esc(e.rue) + '</strong><br>' +
-      esc(S.communeLabel(e.commune, e.lieuDit)) + '<br>' +
-      '<span class="pc-popup-meta">Étape ' + e.rang + " / " + total + " · " +
-        e.adresses.length + ' adresse(s)</span><br>' +
-      '<span class="pc-popup-prec">' + (LIBELLES[e.niveau] || "Sans position") + '</span>' +
-      '<div class="pc-popup-liste">' + noms.join("<br>") +
-        (reste > 0 ? "<br><em>+ " + reste + " autre(s)</em>" : "") + '</div>' +
-    '</div>';
   }
 
   function placees() {
@@ -561,75 +535,17 @@ window.Parcours = (function () {
     });
   }
 
-  // Départ, arrivée, changements de commune. Les numéros d'étape ont été
-  // retirés : dans les Données, la carte sert à lire la forme de la tournée,
-  // et le détail d'une adresse s'ouvre depuis la case de casier, pas d'ici.
-  function dessinerReperes(v, points) {
-    v.calques.communes.clearLayers();
-    var total = modele.etapes.length;
-
-    points.forEach(function (p, i) {
-      var e = p.etapes[0];
-      var estDepart = i === 0, estArrivee = i === points.length - 1;
-      // Contenu calculé à l'ouverture : le composer d'avance pour chaque repère
-      // reviendrait à construire des centaines de fragments jamais lus.
-      var contenu = function () {
-        return p.etapes.map(function (x) { return popupEtape(x, total); }).join("<hr>");
-      };
-
-      if (estDepart || estArrivee) {
-        L.marker([p.lat, p.lon], {
-          icon: icone(estDepart ? "D" : "A", "pc-borne " + (estDepart ? "pc-depart" : "pc-arrivee"), 30),
-          zIndexOffset: 1000
-        }).bindPopup(function () {
-          return "<strong>" + (estDepart ? "Départ" : "Arrivée") + "</strong><br>" + contenu();
-        }).addTo(v.calques.communes);
-        return;
-      }
-
-      // Changement de commune : repère visible dès la vue d'ensemble.
-      var precedent = points[i - 1].etapes[0];
-      if (S.normalize(precedent.commune) !== S.normalize(e.commune)) {
-        L.marker([p.lat, p.lon], { icon: icone("", "pc-commune", 16) })
-          .bindTooltip(e.commune, { permanent: false, direction: "top" })
-          .bindPopup(contenu)
-          .addTo(v.calques.communes);
-      }
-    });
+  // Seul réglage d'affichage qui reste : le sens de parcours. Il se lit au
+  // zoom de travail et se coupe depuis les réglages, pour qui préfère la trace
+  // nue.
+  function flechesDemandees() {
+    return S.getSettings().flechesSens !== false;
   }
 
-  // Construite seulement au premier affichage réel : fabriquer des centaines de
-  // marqueurs que le réglage laisse masqués coûtait cher pour rien.
-  function dessinerAdresses(v) {
-    if (v.adressesPretes) return;
-    v.adressesPretes = true;
-    v.calques.adresses.clearLayers();
-    modele.rows.forEach(function (r) {
-      var niveau = niveauDe(r);
-      if (!niveau) return;
-      var pos = S.positionUtile(r);
-      var m = L.circleMarker([pos.lat, pos.lon], {
-        radius: 4, weight: 1, color: "#fff", fillColor: COULEURS[niveau], fillOpacity: 1
-      });
-      var noms = S.namesOf(r).join(" / ") || "(sans nom)";
-      m.bindPopup("<strong>" + esc(noms) + "</strong><br>" +
-        esc([r.numero, r.rue].filter(Boolean).join(" ")) + "<br>" +
-        esc(S.communeLabelOf(r)) + "<br><em>" + LIBELLES[niveau] + "</em>");
-      if (v.onSelect) m.on("click", function () { v.onSelect(r.id); });
-      m.addTo(v.calques.adresses);
-    });
-  }
-
-  // Trois niveaux de lecture : la forme générale de loin, le sens de parcours
-  // en approchant, les adresses seulement au plus près — et seulement si
-  // l'utilisateur les a demandées dans les réglages.
   function appliquerZoom(v) {
     if (!v || !v.map) return;
     var z = v.map.getZoom();
-    basculer(v, v.calques.fleches, !v.leger && z >= ZOOM_FLECHES);
-    var montrerAdresses = !v.leger && S.getSettings().afficherAdressesCarte === true && z >= ZOOM_ADRESSES;
-    if (montrerAdresses) dessinerAdresses(v);
-    basculer(v, v.calques.adresses, montrerAdresses);
+    basculer(v, v.calques.fleches, !v.leger && flechesDemandees() && z >= ZOOM_FLECHES);
   }
 
   function basculer(v, calque, visible) {
@@ -652,7 +568,10 @@ window.Parcours = (function () {
     try { carte.fitBounds(pts, { padding: [30, 30] }); } catch (e) { /* ignore */ }
   }
 
+  // Sans argument, efface toutes les cartes ouvertes ; avec une instance qui
+  // n'a pas encore de carte, il n'y a rien à effacer — surtout pas les autres.
   function effacer(instance) {
+    if (instance && !instance.getMap()) return;
     var carte = instance && instance.getMap();
     vues.forEach(function (v) {
       if (carte && v.map !== carte) return;
@@ -678,13 +597,6 @@ window.Parcours = (function () {
 
     v.map.addLayer(v.calques.trace);
     dessinerTrace(v, points, null);
-    if (!v.leger) {
-      // En mode allégé, seule la trace est dessinée : les repères d'étape
-      // masqueraient les marqueurs de distribution de la Course.
-      v.map.addLayer(v.calques.communes);
-      dessinerReperes(v, points);
-      v.adressesPretes = false; // les pastilles seront construites si on les demande
-    }
     appliquerZoom(v);
     if (options.recentrer !== false) recentrer(instance);
 
@@ -733,6 +645,11 @@ window.Parcours = (function () {
   // Une LineString par segment continu. Les interruptions ne sont pas comblées :
   // elles se lisent dans le fichier exactement comme sur la carte, et aucune
   // coordonnée inventée n'y entre — une étape seulement estimée en est exclue.
+  // Dernier GeoJSON produit. La trace dessinée par Leaflet et ce fichier
+  // sortent du même modèle et du même cache de routage : les régénérer
+  // ensemble, c'est garantir que l'export dit exactement ce que la carte montre.
+  var dernierGeoJSON = null;
+
   function geojson() {
     // Toujours reconstruit : un export décrit les données du moment, pas le
     // dernier affichage — sans quoi un import suivi d'un export livrerait la
@@ -767,7 +684,7 @@ window.Parcours = (function () {
       };
     });
 
-    return {
+    dernierGeoJSON = {
       type: "FeatureCollection",
       properties: {
         id_tournee: S.getIdTournee(),
@@ -780,6 +697,49 @@ window.Parcours = (function () {
       },
       features: features
     };
+    return dernierGeoJSON;
+  }
+
+  // ---------------------------------------------------------------------
+  // Construction complète, à la demande
+  // ---------------------------------------------------------------------
+  // Le geste déclenché depuis les réglages, dans l'ordre où il faut le faire :
+  // donner une position aux adresses qui n'en ont pas, oublier la trace mise
+  // en cache, la recalculer sur les positions du moment, puis régénérer le
+  // GeoJSON. Chaque étape annonce où elle en est : un géocodage de quatre
+  // cents adresses ne se fait pas en une seconde, et un écran muet pendant ce
+  // temps-là passe pour une panne.
+  function construireTrace(onProgress) {
+    function etape(texte) { if (onProgress) onProgress(texte); }
+    var bilan = { demandes: aGeocoder().length, geocodees: 0, geocodageEchoue: false,
+                  routee: false, segments: 0, etapes: 0 };
+    var chaine = Promise.resolve();
+
+    if (bilan.demandes) {
+      etape("Géocodage de " + bilan.demandes + " adresse(s)…");
+      chaine = geocoderManquants(function (traites, total) {
+        etape("Géocodage… " + traites + " / " + total);
+      }).then(function (r) {
+        bilan.geocodees = r.places;
+      }).catch(function () {
+        // Sans réseau, le géocodage échoue : la trace se refait quand même,
+        // sur les positions déjà connues.
+        bilan.geocodageEchoue = true;
+      });
+    }
+
+    return chaine.then(function () {
+      etape("Calcul de la trace…");
+      viderCacheRoute();
+      return preparer();
+    }).then(function (trace) {
+      bilan.routee = !!trace;
+      etape("Mise à jour du GeoJSON…");
+      var geo = geojson();
+      bilan.segments = geo.features.length;
+      bilan.etapes = geo.properties.etapes;
+      return bilan;
+    });
   }
 
   // store.js arbitre entre un relevé de terrain et un géocodage, mais la
@@ -792,6 +752,8 @@ window.Parcours = (function () {
     construire: construire,
     preparer: preparer,
     geojson: geojson,
+    geojsonCourant: function () { return dernierGeoJSON; },
+    construireTrace: construireTrace,
     resume: resume,
     afficher: afficher,
     effacer: effacer,

@@ -9,6 +9,7 @@ window.Prep = (function () {
 
   var KEY = "atournee_prep_v1";
   var ZONES_KEY = "atournee_prep_zones_v1";
+  var STD_KEY = "atournee_prep_std_v1";
   // { [id_tournee]: { [addressId]: { lettres:n, colis:n, presse:n, statut:s, motif:'', horodatage:iso } } }
   var state = {};
   // Zones de courrier standard retenues pour la tournée, désignées par leur
@@ -16,6 +17,14 @@ window.Prep = (function () {
   // quantités, pour qu'une clé de case ne puisse jamais être confondue avec un
   // identifiant d'adresse.
   var zones = {};
+  // État de distribution du courrier standard, adresse par adresse :
+  // { [id_tournee]: { [addressId]: { statut, motif, horodatage } } }.
+  //
+  // Un troisième registre, et non une entrée ordinaire : une adresse de zone
+  // standard ne porte aucune quantité, or dans la table des objets suivis
+  // l'absence de quantité vaut précisément « rien à distribuer ici » — une
+  // entrée à zéro y serait effacée au premier enregistrement.
+  var standard = {};
 
   // Catégories d'items à distribuer, source unique pour toute l'application :
   // ajouter une catégorie ici suffit à la faire apparaître partout.
@@ -68,6 +77,63 @@ window.Prep = (function () {
     return e;
   }
 
+  function loadStandard() {
+    try {
+      var raw = localStorage.getItem(STD_KEY);
+      standard = raw ? JSON.parse(raw) : {};
+    } catch (e) { standard = {}; }
+  }
+
+  function persistStandard() {
+    try { localStorage.setItem(STD_KEY, JSON.stringify(standard)); } catch (e) { /* ignore */ }
+  }
+
+  function standardBucket(idTournee) {
+    if (!standard[idTournee]) standard[idTournee] = {};
+    return standard[idTournee];
+  }
+
+  // Même forme de retour que getEntry, sans les quantités : le reste de
+  // l'application manipule alors les deux natures d'adresse du même geste.
+  function getStandardEntry(idTournee, addrId) {
+    var b = standard[idTournee];
+    var e = b && b[addrId];
+    return {
+      statut: (e && e.statut) || STATUTS.A_FAIRE,
+      motif: (e && e.motif) || "",
+      horodatage: (e && e.horodatage) || ""
+    };
+  }
+
+  function setStandardStatut(idTournee, addrId, statut, motif) {
+    var b = standardBucket(idTournee);
+    if (statut === STATUTS.A_FAIRE) { delete b[addrId]; return; }
+    b[addrId] = {
+      statut: statut,
+      motif: (statut === STATUTS.ABANDONNE) ? (motif || "") : "",
+      horodatage: nowISO()
+    };
+  }
+
+  function setStandardStatutMany(idTournee, addrIds, statut, motif) {
+    var snapshot = addrIds.map(function (id) {
+      var e = getStandardEntry(idTournee, id);
+      return { addressId: id, statut: e.statut, motif: e.motif, horodatage: e.horodatage };
+    });
+    addrIds.forEach(function (id) { setStandardStatut(idTournee, id, statut, motif); });
+    persistStandard();
+    return snapshot;
+  }
+
+  function restoreStandard(idTournee, snapshot) {
+    var b = standardBucket(idTournee);
+    snapshot.forEach(function (s) {
+      if (s.statut === STATUTS.A_FAIRE) { delete b[s.addressId]; return; }
+      b[s.addressId] = { statut: s.statut, motif: s.motif, horodatage: s.horodatage };
+    });
+    persistStandard();
+  }
+
   function loadZones() {
     try {
       var raw = localStorage.getItem(ZONES_KEY);
@@ -114,6 +180,7 @@ window.Prep = (function () {
 
   function load() {
     loadZones();
+    loadStandard();
     try {
       var raw = localStorage.getItem(KEY);
       state = raw ? JSON.parse(raw) : {};
@@ -268,6 +335,8 @@ window.Prep = (function () {
     persist();
     delete zones[idTournee];
     persistZones();
+    delete standard[idTournee];
+    persistStandard();
   }
 
   return {
@@ -286,6 +355,9 @@ window.Prep = (function () {
     setStatutMany: setStatutMany,
     restore: restore,
     listEntries: listEntries,
+    getStandardEntry: getStandardEntry,
+    setStandardStatutMany: setStandardStatutMany,
+    restoreStandard: restoreStandard,
     getZonesStandard: getZonesStandard,
     isZoneStandard: isZoneStandard,
     setZoneStandard: setZoneStandard,

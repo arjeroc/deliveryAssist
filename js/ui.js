@@ -157,9 +157,10 @@ window.UI = (function () {
   }
 
   // ---------------------------------------------------------------------
-  // Onglet Carte — le parcours de tournée reconstruit. Les adresses une à une
-  // ne sont plus une vue séparée : elles s'ajoutent au parcours, au zoom, si
-  // le réglage correspondant est activé.
+  // Onglet Carte — la trace de la tournée, et rien d'autre. Aucun marqueur n'y
+  // est posé : ni adresse, ni étape, ni pastille d'information. Ce qu'on vient
+  // y chercher, c'est la forme du parcours ; le détail d'une adresse s'ouvre
+  // depuis la case de casier, sous la carte.
   // ---------------------------------------------------------------------
   var parcoursDeplie = false;    // résumé replié par défaut
   var parcoursDernier = null;
@@ -167,9 +168,7 @@ window.UI = (function () {
   function renderMapView() {
     renderParcoursPanel(null, "Reconstruction du parcours…");
     renderCasierBrowser();
-    Parcours.afficher(M, {
-      onSelect: function (id) { openFiche(id); }
-    }).then(function (res) {
+    Parcours.afficher(M, {}).then(function (res) {
       parcoursDernier = res;
       renderParcoursPanel(res, null);
       // La trace vient d'être (re)dessinée : elle a repris la main sur le
@@ -261,9 +260,10 @@ window.UI = (function () {
     montrerCasierSurCarte();
   }
 
-  // Projection de la case courante sur la carte : des pastilles aux couleurs de
-  // commune, posées par-dessus la trace. Un aller simple — la carte reçoit,
-  // elle ne renvoie rien vers les données.
+  // Projection de la case courante sur la carte : un cadrage, plus un point.
+  // La carte ne porte que la trace — elle se déplace sur la case consultée
+  // plutôt que d'y poser des pastilles. Un aller simple : la carte reçoit son
+  // cadrage, elle ne renvoie rien vers les données.
   function montrerCasierSurCarte() {
     if (currentView !== "map") return;
     var etapes = casierEtapes();
@@ -271,15 +271,9 @@ window.UI = (function () {
     clampCasierIndex(etapes);
     var points = etapes[casierIndex].rows.filter(S.hasPosition).map(function (r) {
       var pos = S.positionUtile(r);
-      return {
-        id: r.id, lat: pos.lat, lon: pos.lon,
-        color: S.getCommuneColor(r.commune), size: 14,
-        popupHtml: "<strong>" + escapeHtml(S.namesOf(r).join(" / ") || "(sans nom)") + "</strong><br>" +
-          escapeHtml([r.numero, r.rue].filter(Boolean).join(" ")) + "<br>" +
-          escapeHtml(S.communeLabelOf(r)) + "<br><em>" + escapeHtml(S.casierLabel(r)) + "</em>"
-      };
+      return { id: r.id, lat: pos.lat, lon: pos.lon };
     });
-    M.renderPoints(points, { fit: false });
+    if (!points.length) return;
     var cible = casierFocusId && points.filter(function (p) { return p.id === casierFocusId; })[0];
     if (cible) M.centerOn(cible.lat, cible.lon, 17);
     else M.fitPoints(points, 16);
@@ -371,7 +365,7 @@ window.UI = (function () {
           : "") +
         (parcoursDeplie
           ? '<div class="pc-actions">' +
-              '<button class="pc-btn" data-action="parcours-reconstruire">🔄 Reconstruire la trace</button>' +
+              '<button class="pc-btn" data-action="parcours-construire">🧭 Construire la trace</button>' +
               '<button class="pc-btn" data-action="parcours-export">⬇ Exporter la trace (GeoJSON)</button>' +
             '</div>'
           : "") +
@@ -406,13 +400,43 @@ window.UI = (function () {
 
   // La trace vit dans un cache tant que les positions ne bougent pas : elle se
   // construit au chargement des données puis se tait, sans repasser par le
-  // service de routage à chaque ouverture de la carte. Ce bouton est la reprise
-  // en main : il jette le cache et refait le calcul.
-  function reconstruireParcours() {
-    Parcours.viderCacheRoute();
-    Parcours.effacer(suiviMap); // la Course refera la sienne à sa prochaine visite
-    renderMapView();
-    toast("Trace reconstruite.", "ok");
+  // service de routage à chaque ouverture de la carte. « Construire la trace »
+  // est la reprise en main : géocoder ce qui n'a pas de position, jeter le
+  // cache, refaire le calcul routier, régénérer le GeoJSON.
+  //
+  // Le compte rendu passe par un rappel plutôt que par un toast imposé : le
+  // même enchaînement sert au panneau de la carte et aux réglages, et chacun
+  // affiche l'avancement là où l'utilisateur a les yeux.
+  function construireTrace(annoncer) {
+    annoncer("Construction de la trace…");
+    return Parcours.construireTrace(annoncer).then(function (bilan) {
+      Parcours.effacer(suiviMap); // la Course refera la sienne à sa prochaine visite
+      if (currentView === "map") renderMapView();
+      var dit = [];
+      if (bilan.demandes) {
+        dit.push(bilan.geocodageEchoue
+          ? "géocodage indisponible, " + bilan.demandes + " adresse(s) sans position"
+          : bilan.geocodees + " adresse(s) géocodée(s) sur " + bilan.demandes);
+      }
+      dit.push(bilan.segments + " segment(s) · " + bilan.etapes + " étape(s)");
+      if (!bilan.routee) dit.push("routage indisponible : lignes directes");
+      return "Trace construite — " + dit.join(" · ") + ".";
+    });
+  }
+
+  function construireTraceDepuisCarte() {
+    construireTrace(function (texte) { renderParcoursPanel(null, texte); })
+      .then(function (texte) { toast(texte, "ok"); })
+      .catch(function () {
+        toast("Construction de la trace impossible.", "err");
+        renderMapView();
+      });
+  }
+
+  function construireTraceDepuisAdmin() {
+    construireTrace(function (texte) { showTraceStatus("", texte); })
+      .then(function (texte) { showTraceStatus("ok", texte); })
+      .catch(function () { showTraceStatus("err", "Construction de la trace impossible."); });
   }
 
   // L'export attend que la trace routière soit disponible : sans cela, un
@@ -1461,9 +1485,7 @@ window.UI = (function () {
   }
 
   function refreshSuiviAfterChange() {
-    renderSuiviProgress();
-    renderSuiviTournee();
-    renderSuiviCarte();
+    renderSuivi();
   }
 
   function applyStatut(addrIds, statut, motif, message) {
@@ -1579,11 +1601,16 @@ window.UI = (function () {
   function pickMotif(motifKey) {
     if (!sheetTarget) return;
     var ids = sheetTarget.ids;
-    var estZone = sheetTarget.scope === "zone";
+    var scope = sheetTarget.scope;
     closeSheet();
+    if (scope === "standard") {
+      applyStatutStandard(ids, Prep.STATUTS.ABANDONNE, motifKey,
+        ids.length + " numéro(s) non distribué(s) — " + Prep.motifLabel(motifKey));
+      return;
+    }
     applyStatut(ids, Prep.STATUTS.ABANDONNE, motifKey,
-      estZone ? ids.length + " adresse(s) abandonnée(s) — " + Prep.motifLabel(motifKey)
-              : "Non distribuée — " + Prep.motifLabel(motifKey));
+      scope === "zone" ? ids.length + " adresse(s) abandonnée(s) — " + Prep.motifLabel(motifKey)
+                       : "Non distribuée — " + Prep.motifLabel(motifKey));
   }
 
   // --- onglet Tournée : cards par rue, parcourues dans l'ordre de la tournée ---
@@ -1591,8 +1618,22 @@ window.UI = (function () {
   var tourneeSwipeStartX = null;
   var tourneeSwipeStartY = null;
 
+  // Identité d'une étape de course. La case de casier vient en tête, et ce
+  // n'est pas un détail de tri : c'est elle qui fait l'étape.
+  //
+  // Une clé bâtie sur la seule rue fusionnait tout ce que la tournée traverse
+  // sous un même nom, où que ce soit dans le casier — « 10 route de Mansle »
+  // en C3L3 et « 40/42 route de Mansle » en C3L4 se retrouvaient sur une seule
+  // card, placée au rang du premier passage. Deux arrêts distincts du casier
+  // disparaissaient ainsi en un seul, et l'ordre de la tournée s'en trouvait
+  // contredit — le même travers que le parcours a déjà corrigé sur la carte.
+  //
+  // Les adresses hors casier viennent d'une autre tournée : elles partagent un
+  // compartiment à part, qui ne peut collisionner avec aucune case réelle.
   function tourneeGroupKeyOf(row) {
-    return (row.rue || "").trim().toUpperCase() + "|" + (row.commune || "").trim().toUpperCase();
+    return (S.casierCle(row) || "HORS") + "|" +
+      (row.rue || "").trim().toUpperCase() + "|" +
+      (row.commune || "").trim().toUpperCase();
   }
 
   function ordreDe(valeur) {
@@ -1603,10 +1644,13 @@ window.UI = (function () {
   //
   //   — les adresses porteuses d'objets suivis (colis, lettres, presse) ;
   //   — les adresses des cases de casier retenues comme zones de courrier
-  //     standard, qui forment des zones sans item à compter.
+  //     standard, qui n'ont aucun item à compter mais bien une distribution à
+  //     faire, et donc un état propre.
   //
-  // Une rue qui reçoit les deux ne fait qu'une zone : elle liste ses objets
-  // suivis et signale, en pied, le reste qu'elle distribue en standard.
+  // Une rue qui reçoit les deux ne fait qu'une zone, en deux blocs : la liste
+  // de ses objets suivis, puis les numéros qu'elle dessert en standard. Les
+  // deux se valident séparément — on peut avoir déposé le colis sans avoir
+  // encore fait la rue.
   //
   // Les rues se suivent dans l'ordre du casier — la source de vérité de la
   // tournée — et non dans un ordre recalculé ici ; à l'intérieur d'une rue,
@@ -1628,46 +1672,67 @@ window.UI = (function () {
       if (!groups[key]) {
         groups[key] = {
           key: key, rue: row.rue || "(rue non renseignée)", commune: row.commune || "",
-          lieuxDits: {}, items: [], autres: 0
+          // Toutes les adresses du groupe partagent la case, par construction :
+          // la première la donne pour toutes.
+          casier: S.casierCle(row), casierLabel: S.casierLabel(row),
+          lieuxDits: {}, items: [], standards: []
         };
         order.push(key);
       }
       var g = groups[key];
       if (row.lieu_dit) g.lieuxDits[row.lieu_dit.trim()] = true;
-      // Dans une zone qui a des items, les adresses sans item resteraient du
-      // bruit : on les compte sans les lister.
       if (Prep.countItems(entry) > 0) g.items.push({ row: row, entry: entry });
-      else g.autres += 1;
+      else g.standards.push({ row: row, entry: Prep.getStandardEntry(idT, row.id) });
     });
 
     var list = order.map(function (k) { return groups[k]; });
     list.forEach(function (g) {
-      g.items.sort(function (a, b) {
-        var oa = ordreDe(a.row.ordre_rue), ob = ordreDe(b.row.ordre_rue);
-        if (oa === null) oa = Infinity;
-        if (ob === null) ob = Infinity;
-        if (oa !== ob) return oa - ob;
-        return (Number(a.row.numero) || 0) - (Number(b.row.numero) || 0);
-      });
+      g.items.sort(trierDansLaRue);
+      g.standards.sort(trierDansLaRue);
       Prep.TYPES.forEach(function (t) {
         g[t.key] = g.items.reduce(function (s, it) { return s + it.entry[t.key]; }, 0);
       });
-      g.distribuees = g.items.filter(function (it) { return it.entry.statut === Prep.STATUTS.DISTRIBUE; }).length;
-      g.abandonnees = g.items.filter(function (it) { return it.entry.statut === Prep.STATUTS.ABANDONNE; }).length;
+      g.distribuees = compterStatut(g.items, Prep.STATUTS.DISTRIBUE);
+      g.abandonnees = compterStatut(g.items, Prep.STATUTS.ABANDONNE);
       g.restantes = g.items.length - g.distribuees - g.abandonnees;
       g.terminee = g.restantes === 0;
-      // Zone de distribution standard : aucun item enregistré, donc rien à valider.
+      // Courrier standard de la rue : les mêmes trois compteurs, tenus à part.
+      g.stdDistribuees = compterStatut(g.standards, Prep.STATUTS.DISTRIBUE);
+      g.stdAbandonnees = compterStatut(g.standards, Prep.STATUTS.ABANDONNE);
+      g.stdRestantes = g.standards.length - g.stdDistribuees - g.stdAbandonnees;
+      g.stdTerminee = g.standards.length > 0 && g.stdRestantes === 0;
+      g.stdMotif = (g.standards.filter(function (it) { return it.entry.motif; })[0] || { entry: {} }).entry.motif || "";
+      g.autres = g.standards.length;
+      // Zone entièrement standard : elle n'a aucun objet suivi à lister.
       g.standard = g.items.length === 0;
+      // Ce que les confirmations et les panneaux nomment : une rue seule ne
+      // suffit plus à désigner l'étape, puisqu'une même rue peut en occuper
+      // plusieurs à la file.
+      g.libelle = g.rue + (g.casier ? " · " + g.casierLabel : "");
       // Le lieu-dit n'étiquette la zone que si toutes ses adresses le partagent.
       var lieux = Object.keys(g.lieuxDits);
       g.lieuDit = (lieux.length === 1 && g.autres + g.items.length > 0) ? lieux[0] : "";
       // Cible d'itinéraire : la première adresse localisée de la zone.
-      var ancre = g.items.concat([]).map(function (it) { return it.row; })
+      var ancre = g.items.concat(g.standards).map(function (it) { return it.row; })
         .concat(S.getRows().filter(function (r) { return tourneeGroupKeyOf(r) === g.key; }))
         .find(function (r) { return S.hasPosition(r); });
       g.ancreId = ancre ? ancre.id : null;
     });
     return list;
+  }
+
+  // Ordre de passage à l'intérieur d'une rue : l'ordre préparé s'il existe,
+  // le numéro sinon.
+  function trierDansLaRue(a, b) {
+    var oa = ordreDe(a.row.ordre_rue), ob = ordreDe(b.row.ordre_rue);
+    if (oa === null) oa = Infinity;
+    if (ob === null) ob = Infinity;
+    if (oa !== ob) return oa - ob;
+    return (Number(a.row.numero) || 0) - (Number(b.row.numero) || 0);
+  }
+
+  function compterStatut(liste, statut) {
+    return liste.filter(function (it) { return it.entry.statut === statut; }).length;
   }
 
   function clampTourneeIndex(groups) {
@@ -1735,9 +1800,60 @@ window.UI = (function () {
     '</div>';
   }
 
+  // --- bloc de distribution standard ------------------------------------
+  //
+  // Un objet suivi se valide adresse par adresse : on sait ce qu'on dépose et
+  // chez qui. Le courrier standard, lui, ne se compte pas — il se dessert. Ce
+  // bloc dit donc la seule chose utile devant la rue : quels numéros sont à
+  // faire. D'où une carte volontairement différente de celle des objets suivis
+  // — fond crème, liseré pointillé, numéros en pastilles — pour qu'on ne
+  // confonde jamais « déposer ce colis-là » et « faire cette rue ».
+  function stdNumeroHTML(item) {
+    var num = (item.row.numero || "").trim();
+    var etat = item.entry.statut === Prep.STATUTS.DISTRIBUE ? " is-distribue"
+             : item.entry.statut === Prep.STATUTS.ABANDONNE ? " is-abandonne" : "";
+    var titre = [num, item.row.lieu_dit || "", S.namesOf(item.row).join(" / ")]
+      .filter(Boolean).join(" · ") || "Adresse sans numéro";
+    return '<span class="std-num' + (num ? "" : " sans-numero") + etat + '" title="' +
+      escapeHtml(titre) + '">' + escapeHtml(num || "—") + '</span>';
+  }
+
+  function stdEtatHTML(g) {
+    if (!g.stdTerminee) return { classe: "", texte: g.standards.length + " numéro(s) à desservir" };
+    if (!g.stdAbandonnees) return { classe: "est-ok", texte: "Distribution faite" };
+    if (!g.stdDistribuees) {
+      return { classe: "est-ko", texte: "Non distribuée" + (g.stdMotif ? " — " + Prep.motifLabel(g.stdMotif) : "") };
+    }
+    return { classe: "est-ok", texte: g.stdDistribuees + " distribué(s) · " + g.stdAbandonnees + " non distribué(s)" };
+  }
+
+  function zoneStandardHTML(g) {
+    if (!g.standards.length) return "";
+    var key = escapeHtml(g.key);
+    var etat = stdEtatHTML(g);
+    return '<div class="std-bloc' + (g.stdTerminee ? " est-fait" : "") + '">' +
+      '<div class="std-entete">' +
+        '<span class="std-pastille">📮</span>' +
+        '<div class="std-titre">Distribution standard' +
+          '<div class="std-sous ' + etat.classe + '">' + escapeHtml(etat.texte) + '</div>' +
+        '</div>' +
+        '<span class="std-compte">' + g.standards.length + '</span>' +
+      '</div>' +
+      '<div class="std-numeros">' + g.standards.map(stdNumeroHTML).join("") + '</div>' +
+      (g.stdTerminee
+        ? '<div class="std-actions">' +
+            '<button class="std-btn reopen" data-action="zone-std-rouvrir" data-key="' + key + '">↺ Rouvrir la distribution</button>' +
+          '</div>'
+        : '<div class="std-actions">' +
+            '<button class="std-btn stop" data-action="zone-std-abandonner" data-key="' + key + '">⊘ Abandonner</button>' +
+            '<button class="std-btn ok" data-action="zone-std-valider" data-key="' + key + '">✓ Valider la distribution</button>' +
+          '</div>') +
+    '</div>';
+  }
+
   function zoneActionsHTML(g) {
     var key = escapeHtml(g.key);
-    // Zone de distribution standard : rien à valider, seulement s'y rendre.
+    // Zone entièrement standard : ses actions sont portées par son propre bloc.
     if (g.standard) return "";
     if (g.terminee) {
       return '<div class="zone-actions">' +
@@ -1750,9 +1866,8 @@ window.UI = (function () {
     '</div>';
   }
 
-  function renderSuiviTournee() {
-    var idT = S.getIdTournee();
-    var groups = buildTourneeGroups(idT);
+  function renderSuiviTournee(groups) {
+    groups = groups || buildTourneeGroups(S.getIdTournee());
     clampTourneeIndex(groups);
 
     if (!groups.length) {
@@ -1767,25 +1882,24 @@ window.UI = (function () {
     els.suiviTourneeWrap.innerHTML =
       '<div class="tournee-nav">' +
         '<button class="tournee-nav-btn" data-action="tournee-prev" ' + (tourneeIndex === 0 ? "disabled" : "") + ' aria-label="Rue précédente">‹</button>' +
-        '<div class="tournee-index">Rue ' + (tourneeIndex + 1) + ' / ' + groups.length + '</div>' +
+        '<div class="tournee-index">Étape ' + (tourneeIndex + 1) + ' / ' + groups.length + '</div>' +
         '<button class="tournee-nav-btn" data-action="tournee-next" ' + (tourneeIndex === groups.length - 1 ? "disabled" : "") + ' aria-label="Rue suivante">›</button>' +
       '</div>' +
       '<div class="tournee-card' + (g.standard ? " zone-standard" : "") + '" id="tourneeCardSwipe">' +
         '<div class="tournee-card-head">' +
           (g.commune ? '<span class="commune-dot" style="background:' + S.getCommuneColor(g.commune) + ';"></span>' : "") +
           '<div class="tournee-card-title">' + escapeHtml(g.rue) + '</div>' +
+          '<span class="tournee-casier' + (g.casier ? "" : " hors") + '">' + escapeHtml(g.casierLabel) + '</span>' +
           '<button class="addr-btn nav zone-nav" data-action="zone-naviguer" data-key="' + escapeHtml(g.key) + '" aria-label="Se rendre dans cette zone">🧭</button>' +
         '</div>' +
         (g.commune ? '<div class="tournee-card-sub">' + escapeHtml(S.communeLabel(g.commune, g.lieuDit)) + '</div>' : "") +
         (g.standard
-          ? '<div class="zone-standard-line"><span class="tag">Distribution standard</span>' +
-              (g.autres ? '<span class="muted small">' + g.autres + ' adresse(s)</span>' : "") +
-            '</div>'
+          ? ""
           : '<div class="tournee-card-figures">' + zoneTotauxHTML(g) + '</div>' +
             zoneProgressHTML(g) +
-            '<div class="tournee-addr-list">' + g.items.map(tourneeAddrRowHTML).join("") + '</div>' +
-            (g.autres ? '<div class="zone-autres">+ ' + g.autres + ' adresse(s) en distribution standard</div>' : "")) +
+            '<div class="tournee-addr-list">' + g.items.map(tourneeAddrRowHTML).join("") + '</div>') +
         zoneActionsHTML(g) +
+        zoneStandardHTML(g) +
       '</div>';
 
     bindTourneeSwipe();
@@ -1795,7 +1909,7 @@ window.UI = (function () {
     var groups = buildTourneeGroups(S.getIdTournee());
     tourneeIndex += delta;
     clampTourneeIndex(groups);
-    renderSuiviTournee();
+    renderSuiviTournee(groups);
   }
 
   function findGroup(key) {
@@ -1814,7 +1928,7 @@ window.UI = (function () {
     if (!g) return;
     var ids = idsRestants(g);
     if (!ids.length) return;
-    if (ids.length > 1 && !confirmAction("Marquer les " + ids.length + " adresses restantes de " + g.rue + " comme distribuées ?")) return;
+    if (ids.length > 1 && !confirmAction("Marquer les " + ids.length + " adresses restantes de " + g.libelle + " comme distribuées ?")) return;
     applyStatut(ids, Prep.STATUTS.DISTRIBUE, "", ids.length + " adresse(s) distribuée(s).");
   }
 
@@ -1823,14 +1937,58 @@ window.UI = (function () {
     if (!g) return;
     var ids = idsRestants(g);
     if (!ids.length) return;
-    openMotifSheet("Abandonner la zone", ids.length + " adresse(s) restante(s) — " + g.rue, { scope: "zone", ids: ids });
+    openMotifSheet("Abandonner la zone", ids.length + " adresse(s) restante(s) — " + g.libelle, { scope: "zone", ids: ids });
+  }
+
+  // Mêmes gestes que pour les objets suivis, sur l'autre registre : valider,
+  // abandonner avec un motif, rouvrir. Un seul appui couvre toute la rue —
+  // c'est bien ainsi que le courrier standard se distribue.
+  function idsStdRestants(g) {
+    return g.standards.filter(function (it) { return it.entry.statut === Prep.STATUTS.A_FAIRE; })
+                      .map(function (it) { return it.row.id; });
+  }
+
+  function applyStatutStandard(addrIds, statut, motif, message) {
+    var idT = S.getIdTournee();
+    var snapshot = Prep.setStandardStatutMany(idT, addrIds, statut, motif);
+    refreshSuiviAfterChange();
+    toast(message, "ok", function () {
+      Prep.restoreStandard(idT, snapshot);
+      refreshSuiviAfterChange();
+    });
+  }
+
+  function zoneStdValider(key) {
+    var g = findGroup(key);
+    if (!g) return;
+    var ids = idsStdRestants(g);
+    if (!ids.length) return;
+    if (ids.length > 1 && !confirmAction("Valider la distribution standard de " + g.libelle + " (" + ids.length + " numéro(s)) ?")) return;
+    applyStatutStandard(ids, Prep.STATUTS.DISTRIBUE, "", ids.length + " numéro(s) distribué(s).");
+  }
+
+  function zoneStdAbandonner(key) {
+    var g = findGroup(key);
+    if (!g) return;
+    var ids = idsStdRestants(g);
+    if (!ids.length) return;
+    openMotifSheet("Abandonner la distribution standard", ids.length + " numéro(s) — " + g.libelle,
+      { scope: "standard", ids: ids });
+  }
+
+  function zoneStdRouvrir(key) {
+    var g = findGroup(key);
+    if (!g) return;
+    var ids = g.standards.map(function (it) { return it.row.id; });
+    if (!confirmAction("Remettre la distribution standard de " + g.libelle + " à faire ?")) return;
+    applyStatutStandard(ids, Prep.STATUTS.A_FAIRE, "", "Distribution standard rouverte.");
   }
 
   function zoneRouvrir(key) {
     var g = findGroup(key);
     if (!g) return;
     var ids = g.items.map(function (it) { return it.row.id; });
-    if (!confirmAction("Remettre les " + ids.length + " adresses de " + g.rue + " à faire ?")) return;
+    if (!confirmAction("Remettre les " + ids.length + " adresses de " + g.libelle + " à faire ?")) return;
     applyStatut(ids, Prep.STATUTS.A_FAIRE, "", "Zone rouverte.");
   }
 
@@ -1917,9 +2075,21 @@ window.UI = (function () {
   // déplier ne soit qu'un agrandissement de ce qu'on lisait déjà.
   var suiviResumeDeplie = false;
 
-  function renderSuiviProgress() {
-    var p = Prep.progress(S.getIdTournee());
-    var a = p.adresses;
+  function renderSuiviProgress(groups) {
+    var idT = S.getIdTournee();
+    var p = Prep.progress(idT);
+    // Les zones de courrier standard ne portent aucun objet à compter, mais
+    // elles ont désormais un état : les laisser hors du compteur d'adresses
+    // ferait mentir la barre — on pourrait faire la moitié de la tournée sans
+    // qu'elle bouge. Les compteurs d'objets, eux, restent ceux des suivis.
+    var a = { total: p.adresses.total, distribuees: p.adresses.distribuees,
+              abandonnees: p.adresses.abandonnees, restantes: p.adresses.restantes };
+    (groups || buildTourneeGroups(idT)).forEach(function (g) {
+      a.total += g.standards.length;
+      a.distribuees += g.stdDistribuees;
+      a.abandonnees += g.stdAbandonnees;
+      a.restantes += g.stdRestantes;
+    });
     var pctDist = a.total ? (a.distribuees / a.total) * 100 : 0;
     var pctAband = a.total ? (a.abandonnees / a.total) * 100 : 0;
 
@@ -1952,8 +2122,9 @@ window.UI = (function () {
   }
 
   function renderSuivi() {
-    renderSuiviProgress();
-    renderSuiviTournee();
+    var groups = buildTourneeGroups(S.getIdTournee());
+    renderSuiviProgress(groups);
+    renderSuiviTournee(groups);
     renderSuiviCarte();
   }
 
@@ -2064,6 +2235,13 @@ window.UI = (function () {
       '</div>' +
       '<div id="adminStatus"></div>' +
       '<hr>' +
+      '<div class="fieldset-title">Trace de la tournée</div>' +
+      '<div class="toolbar">' +
+        '<button class="primary" data-action="admin-construire-trace">🧭 Construire la trace</button>' +
+      '</div>' +
+      '<small class="hint">Géocode les adresses sans position, recalcule le parcours et met à jour le GeoJSON dessiné sur la carte.</small>' +
+      '<div id="traceStatus"></div>' +
+      '<hr>' +
       '<div class="fieldset-title">Couleurs par commune</div>' +
       '<div id="communeColors">' + communeColorRowsHTML() + '</div>' +
       '<hr>' +
@@ -2074,13 +2252,23 @@ window.UI = (function () {
         '<summary>Réglages avancés</summary>' +
         '<label class="switch-row"><input type="checkbox" id="admGeocodage" ' + (s.geocodageActif ? "checked" : "") + '> Activer le géocodage automatique (API adresse gouvernementale)</label>' +
         '<label class="switch-row"><input type="checkbox" id="admScan" ' + (s.scanActif !== false ? "checked" : "") + '> Scan d\'étiquette par la caméra (expérimental)</label>' +
-        '<label class="switch-row"><input type="checkbox" id="admAdressesCarte" ' + (s.afficherAdressesCarte === true ? "checked" : "") + '> Afficher les adresses sur la carte (au zoom rapproché)</label>' +
+        '<label class="switch-row"><input type="checkbox" id="admFleches" ' + (s.flechesSens !== false ? "checked" : "") + '> Flèches de sens sur la trace (au zoom rapproché)</label>' +
         '<small class="hint">Séparateur des noms multiples&nbsp;: <code>|</code>. Les données restent uniquement dans ce navigateur.</small>' +
       '</details>';
   }
 
   function showAdminStatus(kind, text) {
-    var el = document.getElementById("adminStatus");
+    afficherStatut("adminStatus", kind, text);
+  }
+
+  // La construction de la trace parle sous son propre bouton : mêlée aux
+  // messages d'import, sa progression se lirait à l'autre bout de la page.
+  function showTraceStatus(kind, text) {
+    afficherStatut("traceStatus", kind, text);
+  }
+
+  function afficherStatut(id, kind, text) {
+    var el = document.getElementById(id);
     if (!el) return;
     el.innerHTML = text ? '<div class="status ' + kind + '">' + escapeHtml(text) + '</div>' : "";
   }
@@ -2153,8 +2341,8 @@ window.UI = (function () {
       S.setSetting("scanActif", e.target.checked);
       renderPrep();
     });
-    document.getElementById("admAdressesCarte").addEventListener("change", function (e) {
-      S.setSetting("afficherAdressesCarte", e.target.checked);
+    document.getElementById("admFleches").addEventListener("change", function (e) {
+      S.setSetting("flechesSens", e.target.checked);
       Parcours.rafraichirAffichage();
     });
     document.querySelectorAll("#communeColors input[type=color]").forEach(function (el) {
@@ -2227,6 +2415,9 @@ window.UI = (function () {
         break;
       case "admin-export-trace":
         exportGeoJSONAdmin();
+        break;
+      case "admin-construire-trace":
+        construireTraceDepuisAdmin();
         break;
       case "admin-sample":
         if (S.getRows().length && !confirmAction("Remplacer les données actuelles par l'exemple ?")) return;
@@ -2321,6 +2512,15 @@ window.UI = (function () {
       case "zone-naviguer":
         naviguerVersZone(actionEl.getAttribute("data-key"));
         break;
+      case "zone-std-valider":
+        zoneStdValider(actionEl.getAttribute("data-key"));
+        break;
+      case "zone-std-abandonner":
+        zoneStdAbandonner(actionEl.getAttribute("data-key"));
+        break;
+      case "zone-std-rouvrir":
+        zoneStdRouvrir(actionEl.getAttribute("data-key"));
+        break;
       case "motif-pick":
         pickMotif(actionEl.getAttribute("data-motif"));
         break;
@@ -2344,8 +2544,8 @@ window.UI = (function () {
       case "parcours-geocoder":
         geocoderParcours();
         break;
-      case "parcours-reconstruire":
-        reconstruireParcours();
+      case "parcours-construire":
+        construireTraceDepuisCarte();
         break;
       case "parcours-export":
         exporterTrace();
