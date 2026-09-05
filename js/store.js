@@ -17,9 +17,15 @@ window.Store = (function () {
   var COLUMNS = [
     "id", "id_tournee", "nom_famille", "numero", "rue", "code_postal",
     "commune", "lieu_dit", "latitude", "longitude", "geocode_statut",
+    "lat_relevee", "lon_relevee", "precision_m", "releve_le",
     "casier_c", "casier_l", "ordre_zone", "ordre_rue", "position_manuelle",
     "type_objet", "notes", "stoppub", "date_maj"
   ];
+
+  // Colonnes apparues avec les relevés GPS de terrain. Un fichier plus ancien
+  // reste un fichier valide : leur absence ne se signale pas à l'import, elle
+  // se comble toute seule à la première tournée distribuée.
+  var COLUMNS_OPTIONNELLES = ["lat_relevee", "lon_relevee", "precision_m", "releve_le"];
 
   var state = {
     rows: [],
@@ -27,22 +33,11 @@ window.Store = (function () {
     settings: {
       geocodageActif: true,
       communeColors: {},
-      // Rayons de proximité (mètres) utilisés par la page Course —
-      // configurables plutôt que codés en dur.
-      rayonImmediat: 100,
-      rayonProche: 300,
-      rayonEloigne: 1000,
-      // 'distributions' : seules les zones ayant des items à distribuer.
-      // 'complete'      : toute la tournée, zones de distribution standard incluses.
-      modeSuivi: "distributions",
       // Scan d'étiquette : expérimental, désactivable si la lecture déçoit.
       scanActif: true,
       // Pastilles d'adresses sur la carte : masquées par défaut, la trace du
       // parcours se lisant beaucoup mieux sans elles.
-      afficherAdressesCarte: false,
-      // Repères d'étapes numérotés : ils portent la progression de la tournée,
-      // mais peuvent être masqués pour ne garder que la trace.
-      afficherEtapesCarte: true
+      afficherAdressesCarte: false
     }
   };
 
@@ -84,6 +79,7 @@ window.Store = (function () {
       id: uid(), id_tournee: state.idTournee, nom_famille: "", numero: "",
       rue: "", code_postal: "", commune: "", lieu_dit: "",
       latitude: "", longitude: "", geocode_statut: "",
+      lat_relevee: "", lon_relevee: "", precision_m: "", releve_le: "",
       casier_c: "", casier_l: "", ordre_zone: "", ordre_rue: "",
       position_manuelle: "", type_objet: "", notes: "", stoppub: "false",
       date_maj: todayISO()
@@ -114,6 +110,117 @@ window.Store = (function () {
            !isNaN(Number(row.latitude)) && !isNaN(Number(row.longitude));
   }
 
+  // --- relevés GPS de terrain -----------------------------------------------
+  //
+  // L'API de géolocalisation ne rend pas un score de confiance mais un rayon
+  // d'incertitude en mètres. On le convertit en score une fois pour toutes,
+  // ici, pour que le reste de l'application — et l'utilisateur — n'aient qu'une
+  // seule échelle à lire. Les deux bornes sont posées par l'usage :
+  //   0,95 (≈ 35 m) : assez sûr pour devenir la position officielle de la boîte
+  //   0,85 (≈ 105 m) : en dessous, le relevé n'apprend rien et n'est pas gardé
+  var PRECISION_REF_M = 700;   // rayon auquel le score tombe à zéro
+  var SCORE_MIN = 0.85;        // seuil de conservation
+  var SCORE_SUR = 0.95;        // seuil de promotion en position vérifiée
+
+  function scoreReleve(precisionM) {
+    var p = Number(precisionM);
+    if (isNaN(p) || p < 0) return 0;
+    return Math.max(0, Math.min(1, 1 - p / PRECISION_REF_M));
+  }
+
+  function hasReleve(row) {
+    return row.lat_relevee !== "" && row.lat_relevee !== undefined && row.lat_relevee !== null &&
+           row.lon_relevee !== "" && row.lon_relevee !== undefined && row.lon_relevee !== null &&
+           !isNaN(Number(row.lat_relevee)) && !isNaN(Number(row.lon_relevee));
+  }
+
+  function releveInfo(row) {
+    if (!hasReleve(row)) return null;
+    return {
+      lat: Number(row.lat_relevee),
+      lon: Number(row.lon_relevee),
+      precision: row.precision_m === "" ? null : Number(row.precision_m),
+      score: scoreReleve(row.precision_m),
+      date: row.releve_le || ""
+    };
+  }
+
+  // La finesse d'un géocodage — numéro de rue ou centre de commune — est relevée
+  // par parcours.js auprès de l'API. Plutôt que d'aller la lire dans un stockage
+  // qui ne lui appartient pas, ce module la lui demande. Tant que personne ne
+  // répond, on suppose le géocodage précis : un relevé ne prend jamais la place
+  // d'une donnée dont on ignore la qualité.
+  var resolveurGeocodageApproche = null;
+
+  function setResolveurGeocodageApproche(fn) { resolveurGeocodageApproche = fn; }
+
+  function geocodageApproche(row) {
+    if (row.geocode_statut !== "geocode") return false;
+    return resolveurGeocodageApproche ? !!resolveurGeocodageApproche(row) : false;
+  }
+
+  // Position à employer pour la carte, la trace et l'itinéraire. Un relevé de
+  // terrain non promu ne l'emporte que sur un géocodage approché : être passé
+  // devant la boîte vaut mieux qu'un point posé sur le clocher du village, mais
+  // pas mieux qu'un numéro de rue géocodé au mètre près.
+  function positionUtile(row) {
+    var releve = releveInfo(row);
+    if (releve && geocodageApproche(row)) {
+      return { lat: releve.lat, lon: releve.lon, source: "releve" };
+    }
+    if (hasGPS(row)) {
+      return {
+        lat: Number(row.latitude), lon: Number(row.longitude),
+        source: row.geocode_statut === "geocode" ? "geocode" : "verifie"
+      };
+    }
+    if (releve) return { lat: releve.lat, lon: releve.lon, source: "releve" };
+    return null;
+  }
+
+  function hasPosition(row) { return positionUtile(row) !== null; }
+
+  // Relevé capté automatiquement à la validation d'une livraison. Les règles
+  // tiennent en quatre refus, tous silencieux : la validation d'une tournée ne
+  // s'interrompt jamais pour un problème de GPS.
+  function enregistrerReleveAuto(id, lat, lon, precisionM) {
+    var row = findRow(id);
+    if (!row) return { ok: false, raison: "introuvable" };
+    // Un point déjà vérifié ne se corrige que depuis les Données, à la main.
+    if (row.geocode_statut === "verifie") return { ok: false, raison: "verifie" };
+    var score = scoreReleve(precisionM);
+    if (score < SCORE_MIN) return { ok: false, raison: "imprecis", score: score };
+    var ancien = releveInfo(row);
+    if (ancien && ancien.score >= score) return { ok: false, raison: "moins_bon", score: score };
+
+    var patch = {
+      lat_relevee: lat.toFixed(6), lon_relevee: lon.toFixed(6),
+      precision_m: String(Math.round(precisionM)), releve_le: new Date().toISOString()
+    };
+    var promu = score >= SCORE_SUR;
+    if (promu) {
+      patch.latitude = lat.toFixed(6);
+      patch.longitude = lon.toFixed(6);
+      patch.geocode_statut = "verifie";
+    }
+    updateRow(id, patch);
+    return { ok: true, promu: promu, score: score };
+  }
+
+  // Relevé posé à la main depuis les Données : celui-là passe outre le statut
+  // vérifié et les seuils — l'utilisateur a regardé où il se tenait.
+  function enregistrerReleveManuel(id, lat, lon, precisionM) {
+    var connue = !(precisionM === undefined || precisionM === null || isNaN(Number(precisionM)));
+    var patch = {
+      latitude: lat.toFixed(6), longitude: lon.toFixed(6), geocode_statut: "verifie",
+      lat_relevee: lat.toFixed(6), lon_relevee: lon.toFixed(6),
+      precision_m: connue ? String(Math.round(precisionM)) : "",
+      releve_le: new Date().toISOString()
+    };
+    updateRow(id, patch);
+    return patch;
+  }
+
   function hasCasier(row) {
     return row.casier_c !== "" && row.casier_c !== undefined && row.casier_c !== null &&
            row.casier_l !== "" && row.casier_l !== undefined && row.casier_l !== null;
@@ -121,6 +228,12 @@ window.Store = (function () {
 
   function casierLabel(row) {
     return hasCasier(row) ? ("C" + row.casier_c + "L" + row.casier_l) : "Hors casier";
+  }
+
+  // Clé normalisée d'une case de casier — "C2L3". Les zéros de tête et les
+  // espaces d'un import ne doivent pas fabriquer deux cases pour une seule.
+  function casierCle(row) {
+    return hasCasier(row) ? ("C" + Number(row.casier_c) + "L" + Number(row.casier_l)) : "";
   }
 
   // "LIMOGES (Le Mas de…)" — le lieu-dit reste secondaire, entre parenthèses,
@@ -215,7 +328,7 @@ window.Store = (function () {
     var ordonnees = rowsOrdreTournee(list);
     var out = [];
     ordonnees.forEach(function (r) {
-      var cle = hasCasier(r) ? ("C" + Number(r.casier_c) + "L" + Number(r.casier_l)) : "hors";
+      var cle = hasCasier(r) ? casierCle(r) : "hors";
       var dernier = out[out.length - 1];
       if (!dernier || dernier.cle !== cle) {
         dernier = {
@@ -230,6 +343,55 @@ window.Store = (function () {
       dernier.rows.push(r);
     });
     return out;
+  }
+
+  // Le casier lu colonne par colonne : une colonne, ses lignes, et pour chaque
+  // ligne la rue par laquelle elle commence et celle par laquelle elle finit.
+  //
+  // C'est la forme sous laquelle la Préparation désigne une zone de courrier
+  // standard : le livreur reconnaît une ligne de casier à ses deux extrémités
+  // bien plus vite qu'à l'énumération de tout ce qu'elle contient. Les adresses
+  // hors casier n'y figurent pas — elles appartiennent à une autre tournée.
+  function casierColonnes() {
+    var cases = {}, ordreCases = [];
+    rowsOrdreTournee().forEach(function (r) {
+      if (!hasCasier(r)) return;
+      var cle = casierCle(r);
+      if (!cases[cle]) {
+        cases[cle] = { cle: cle, c: Number(r.casier_c), l: Number(r.casier_l), rows: [] };
+        ordreCases.push(cle);
+      }
+      cases[cle].rows.push(r);
+    });
+
+    var colonnes = {}, ordreColonnes = [];
+    ordreCases.forEach(function (cle) {
+      var cel = cases[cle];
+      // Suite des rues telles qu'elles se présentent dans la case : une rue qui
+      // revient plus loin est bien une nouvelle borne, pas un doublon.
+      var suite = [];
+      cel.rows.forEach(function (r) {
+        var nom = normaliseRue(r.rue) || "(rue non renseignée)";
+        if (suite[suite.length - 1] !== nom) suite.push(nom);
+      });
+      cel.premiereRue = suite[0] || "";
+      cel.derniereRue = suite[suite.length - 1] || "";
+      cel.nbAdresses = cel.rows.length;
+      cel.nbRues = suite.filter(function (v, i, t) { return t.indexOf(v) === i; }).length;
+      cel.commune = (cel.rows[0].commune || "").trim();
+
+      if (!colonnes[cel.c]) {
+        colonnes[cel.c] = { c: cel.c, label: "C" + cel.c, lignes: [] };
+        ordreColonnes.push(cel.c);
+      }
+      colonnes[cel.c].lignes.push(cel);
+    });
+
+    return ordreColonnes.sort(function (a, b) { return a - b; }).map(function (c) {
+      var col = colonnes[c];
+      col.nbAdresses = col.lignes.reduce(function (n, li) { return n + li.nbAdresses; }, 0);
+      return col;
+    });
   }
 
   // --- validation -------------------------------------------------------------
@@ -268,6 +430,17 @@ window.Store = (function () {
       if (r.longitude !== "" && r.longitude !== undefined) {
         var lon = Number(r.longitude);
         if (isNaN(lon) || lon < -180 || lon > 180) warnings.push(ref + " : longitude invalide.");
+      }
+      [["lat_relevee", 90], ["lon_relevee", 180]].forEach(function (pair) {
+        var v = r[pair[0]];
+        if (v !== "" && v !== undefined && v !== null) {
+          var n = Number(v);
+          if (isNaN(n) || n < -pair[1] || n > pair[1]) warnings.push(ref + " : " + pair[0] + " invalide.");
+        }
+      });
+      if (r.precision_m !== "" && r.precision_m !== undefined && r.precision_m !== null) {
+        var prec = Number(r.precision_m);
+        if (isNaN(prec) || prec < 0) warnings.push(ref + " : precision_m invalide.");
       }
       if (r.code_postal && !/^\d{5}$/.test(String(r.code_postal).trim())) {
         warnings.push(ref + " : code postal \"" + r.code_postal + "\" ne ressemble pas à un code à 5 chiffres.");
@@ -324,7 +497,9 @@ window.Store = (function () {
     var table = parseCSV(text);
     if (table.length === 0) return { ok: false, message: "Fichier vide ou illisible." };
     var header = table[0].map(function (h) { return h.trim(); });
-    var missingCols = COLUMNS.filter(function (c) { return header.indexOf(c) === -1; });
+    var missingCols = COLUMNS.filter(function (c) {
+      return header.indexOf(c) === -1 && COLUMNS_OPTIONNELLES.indexOf(c) === -1;
+    });
     var extraCols = header.filter(function (h) { return COLUMNS.indexOf(h) === -1; });
 
     var imported = [];
@@ -410,7 +585,13 @@ window.Store = (function () {
       }
       if (settings) {
         var s = JSON.parse(settings);
-        if (s && typeof s === "object") Object.assign(state.settings, s);
+        // Seules les clés encore connues sont reprises : un réglage retiré de
+        // l'application ne doit pas ressusciter depuis un stockage ancien.
+        if (s && typeof s === "object") {
+          Object.keys(state.settings).forEach(function (k) {
+            if (s[k] !== undefined) state.settings[k] = s[k];
+          });
+        }
       }
     } catch (e) { state.rows = []; }
   }
@@ -781,6 +962,34 @@ window.Store = (function () {
     return out.slice(0, limit || 5);
   }
 
+  // --- écriture des lignes --------------------------------------------------
+
+  function addRow(row) {
+    row.rue = normaliseRue(row.rue);
+    state.rows.unshift(row);
+    persist();
+  }
+
+  function updateRow(id, patch) {
+    var row = state.rows.find(function (r) { return r.id === id; });
+    if (row) {
+      Object.assign(row, patch);
+      row.rue = normaliseRue(row.rue);
+      row.date_maj = todayISO();
+      persist();
+    }
+    return row;
+  }
+
+  function deleteRow(id) {
+    state.rows = state.rows.filter(function (r) { return r.id !== id; });
+    persist();
+  }
+
+  function findRow(id) {
+    return state.rows.find(function (r) { return r.id === id; });
+  }
+
   // --- API publique ---------------------------------------------------------------
 
   return {
@@ -804,13 +1013,25 @@ window.Store = (function () {
     namesOf: namesOf,
     setNames: setNames,
     hasGPS: hasGPS,
+    hasReleve: hasReleve,
+    releveInfo: releveInfo,
+    scoreReleve: scoreReleve,
+    positionUtile: positionUtile,
+    hasPosition: hasPosition,
+    enregistrerReleveAuto: enregistrerReleveAuto,
+    enregistrerReleveManuel: enregistrerReleveManuel,
+    setResolveurGeocodageApproche: setResolveurGeocodageApproche,
+    SCORE_MIN: SCORE_MIN,
+    SCORE_SUR: SCORE_SUR,
     hasCasier: hasCasier,
     casierLabel: casierLabel,
+    casierCle: casierCle,
     positionInfo: positionInfo,
     isStopPub: isStopPub,
     compareTournee: compareTournee,
     rowsOrdreTournee: rowsOrdreTournee,
     etapesCasier: etapesCasier,
+    casierColonnes: casierColonnes,
     normalizeBool: normalizeBool,
 
     getCommuneColor: getCommuneColor,
@@ -835,27 +1056,9 @@ window.Store = (function () {
     normalize: normalize,
     tokenize: tokenize,
 
-    addRow: function (row) {
-      row.rue = normaliseRue(row.rue);
-      state.rows.unshift(row);
-      persist();
-    },
-    updateRow: function (id, patch) {
-      var row = state.rows.find(function (r) { return r.id === id; });
-      if (row) {
-        Object.assign(row, patch);
-        row.rue = normaliseRue(row.rue);
-        row.date_maj = todayISO();
-        persist();
-      }
-      return row;
-    },
-    deleteRow: function (id) {
-      state.rows = state.rows.filter(function (r) { return r.id !== id; });
-      persist();
-    },
-    findRow: function (id) {
-      return state.rows.find(function (r) { return r.id === id; });
-    }
+    addRow: addRow,
+    updateRow: updateRow,
+    deleteRow: deleteRow,
+    findRow: findRow
   };
 })();

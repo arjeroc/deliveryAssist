@@ -8,8 +8,14 @@ window.Prep = (function () {
   "use strict";
 
   var KEY = "atournee_prep_v1";
+  var ZONES_KEY = "atournee_prep_zones_v1";
   // { [id_tournee]: { [addressId]: { lettres:n, colis:n, presse:n, statut:s, motif:'', horodatage:iso } } }
   var state = {};
+  // Zones de courrier standard retenues pour la tournée, désignées par leur
+  // case de casier : { [id_tournee]: { "C2L3": true } }. Stockées à part des
+  // quantités, pour qu'une clé de case ne puisse jamais être confondue avec un
+  // identifiant d'adresse.
+  var zones = {};
 
   // Catégories d'items à distribuer, source unique pour toute l'application :
   // ajouter une catégorie ici suffit à la faire apparaître partout.
@@ -62,7 +68,52 @@ window.Prep = (function () {
     return e;
   }
 
+  function loadZones() {
+    try {
+      var raw = localStorage.getItem(ZONES_KEY);
+      zones = raw ? JSON.parse(raw) : {};
+    } catch (e) { zones = {}; }
+  }
+
+  function persistZones() {
+    try { localStorage.setItem(ZONES_KEY, JSON.stringify(zones)); } catch (e) { /* ignore */ }
+  }
+
+  function zonesBucket(idTournee) {
+    if (!zones[idTournee]) zones[idTournee] = {};
+    return zones[idTournee];
+  }
+
+  // Renvoie la table des cases retenues, telle quelle : l'appelant y lit
+  // l'appartenance d'une case par sa clé, sans reparcourir la liste.
+  function getZonesStandard(idTournee) {
+    return zones[idTournee] || {};
+  }
+
+  function isZoneStandard(idTournee, cle) {
+    return !!(zones[idTournee] && zones[idTournee][cle]);
+  }
+
+  function setZoneStandard(idTournee, cle, actif) {
+    if (!cle) return;
+    var b = zonesBucket(idTournee);
+    if (actif) b[cle] = true;
+    else delete b[cle];
+    persistZones();
+  }
+
+  function toggleZoneStandard(idTournee, cle) {
+    var actif = !isZoneStandard(idTournee, cle);
+    setZoneStandard(idTournee, cle, actif);
+    return actif;
+  }
+
+  function countZonesStandard(idTournee) {
+    return Object.keys(getZonesStandard(idTournee)).length;
+  }
+
   function load() {
+    loadZones();
     try {
       var raw = localStorage.getItem(KEY);
       state = raw ? JSON.parse(raw) : {};
@@ -215,6 +266,8 @@ window.Prep = (function () {
   function resetTournee(idTournee) {
     delete state[idTournee];
     persist();
+    delete zones[idTournee];
+    persistZones();
   }
 
   return {
@@ -233,6 +286,11 @@ window.Prep = (function () {
     setStatutMany: setStatutMany,
     restore: restore,
     listEntries: listEntries,
+    getZonesStandard: getZonesStandard,
+    isZoneStandard: isZoneStandard,
+    setZoneStandard: setZoneStandard,
+    toggleZoneStandard: toggleZoneStandard,
+    countZonesStandard: countZonesStandard,
     totals: totals,
     progress: progress,
     resetTournee: resetTournee

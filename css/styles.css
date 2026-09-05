@@ -94,6 +94,38 @@ mark{background:#fff2a8;color:inherit;border-radius:3px;padding:0 1px;}
 }
 
 /* --- préparation tournée --- */
+/* Deux modes exclusifs : on désigne des zones de courrier standard, ou on
+   attribue des objets suivis. Jamais les deux gestes à l'écran en même temps. */
+.prep-mode{display:none;}
+.prep-mode.active{display:block;}
+
+/* colonne de casier : une carte, ses lignes, chacune résumée à ses deux bornes */
+.casier-card.zone-card .casier-head{align-items:center;flex-wrap:nowrap;margin-bottom:2px;}
+.casier-card.zone-card .casier-meta{flex:1;min-width:0;}
+.zone-tout{flex:0 0 auto;white-space:nowrap;}
+.zone-lignes{display:flex;flex-direction:column;gap:8px;margin-top:6px;}
+.zone-ligne{
+  display:flex;align-items:center;gap:12px;width:100%;text-align:left;
+  padding:11px 12px;border:1px solid var(--line);border-radius:10px;background:#fff;cursor:pointer;
+}
+.zone-ligne:active{background:#eef1ec;}
+/* retenue : la ligne bascule en vert et sa case porte la coche — l'état se lit
+   de loin, sans avoir à relire le libellé */
+.zone-ligne.retenue{border-color:var(--accent);background:#e9f4ee;}
+.zl-case{
+  flex:0 0 auto;width:34px;height:34px;border-radius:9px;background:var(--chip);color:var(--muted);
+  display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:800;letter-spacing:.03em;
+}
+.zone-ligne.retenue .zl-case{background:var(--accent);color:#fff;}
+.zl-coche{
+  flex:0 0 auto;width:16px;text-align:center;color:var(--accent);font-size:17px;font-weight:800;line-height:1;
+}
+.zl-corps{flex:1;min-width:0;}
+.zl-bornes{display:block;font-size:13.5px;font-weight:700;line-height:1.35;}
+.zl-fleche{color:var(--muted);font-weight:400;margin:0 5px;}
+.zl-meta{display:block;font-size:11.5px;color:var(--muted);margin-top:3px;}
+.zone-aide{font-size:11.5px;color:var(--muted);margin-top:10px;line-height:1.5;}
+
 .prep-totals{
   background:var(--accent);color:#fff;border-radius:12px;padding:12px 14px;margin-bottom:12px;
 }
@@ -190,9 +222,9 @@ mark{background:#fff2a8;color:inherit;border-radius:3px;padding:0 1px;}
 .tournee-card-figures{font-size:13px;color:var(--muted);margin-bottom:10px;}
 
 /* --- compteurs d'items : deux niveaux, deux poids ---
-   Zone (total des objets d'une rue) : pastille sombre, on la voit de loin.
-   Adresse (ce qu'il y a dans la main) : « ×3 » discret accolé à l'icône.
-   Un « 3 » de colis ne doit jamais se lire comme un « 3 » d'adresses. */
+   Adresse (ce qu'il faut sortir ici) : pastille sombre, on la voit de loin.
+   Résumé (zone, commune, tournée)    : « ×3 » discret accolé à l'icône.
+   Le nombre qui commande un geste pèse plus que celui qu'on consulte. */
 .item-badge{display:inline-flex;align-items:center;gap:3px;margin-right:8px;vertical-align:middle;}
 .item-badge:last-child{margin-right:0;}
 .item-icon{font-size:15px;line-height:1;}
@@ -234,7 +266,7 @@ mark{background:#fff2a8;color:inherit;border-radius:3px;padding:0 1px;}
 .tournee-addr-row:last-child{border-bottom:none;}
 .tournee-addr-main{flex:1;min-width:0;}
 .tournee-addr-name{font-size:13.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.tournee-addr-meta{font-size:11.5px;color:var(--muted);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.tournee-addr-meta{font-size:11.5px;color:var(--muted);margin-top:4px;line-height:1.5;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 
 /* états : lisibles d'un coup d'œil, y compris en plein soleil */
 .tournee-addr-row.is-distribue{background:#eaf3ed;}
@@ -282,17 +314,12 @@ mark{background:#fff2a8;color:inherit;border-radius:3px;padding:0 1px;}
 
 .proximity-card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin-bottom:10px;}
 .proximity-head{display:flex;justify-content:space-between;align-items:center;gap:8px;}
-.proximity-dist{font-weight:700;white-space:nowrap;font-size:13px;}
-.proximity-dist.zone-immediat{color:var(--err);}
-.proximity-dist.zone-proche{color:var(--warn);}
-.proximity-dist.zone-eloigne{color:var(--muted);}
+.proximity-dist{font-weight:700;white-space:nowrap;font-size:13px;color:var(--muted);}
 .proximity-objects{font-size:13px;color:var(--muted);flex:1;min-width:0;}
 .proximity-foot{display:flex;align-items:center;gap:8px;margin-top:10px;}
 .proximity-card.is-distribue{background:#eaf3ed;}
 .proximity-card.is-distribue .card-title{text-decoration:line-through;opacity:.6;}
 .proximity-card.is-abandonne{background:var(--warn-bg);}
-
-.radius-settings .field{margin-bottom:8px;}
 
 /* --- carte --- */
 /* position:relative + z-index:0 forcent Leaflet à contenir ses propres
@@ -328,14 +355,16 @@ mark{background:#fff2a8;color:inherit;border-radius:3px;padding:0 1px;}
 .pc-btn:active{background:#eef1ec;}
 
 /* repères posés sur la carte */
-.pc-num{
-  width:24px;height:24px;border-radius:50%;background:#fff;border:2px solid var(--accent);
-  color:var(--ink);font-size:11px;font-weight:800;display:flex;align-items:center;justify-content:center;
-  box-shadow:0 1px 3px rgba(0,0,0,.3);
+/* Sens de parcours : un chevron plein posé sur le trait, tourné par le cap.
+   Le triangle est fait de bordures — pas d'image à charger, et sa couleur suit
+   celle du tronçon, donc la fiabilité de la trace. Le liseré blanc le détache
+   du fond de carte comme du trait qu'il chevauche. */
+.pc-fleche{
+  width:0;height:0;margin:2px auto;
+  border-left:5px solid transparent;border-right:5px solid transparent;
+  border-bottom:9px solid var(--accent);
+  filter:drop-shadow(0 0 1px #fff) drop-shadow(0 0 1px #fff);
 }
-.pc-niv-approx{border-color:#f4b400;}
-.pc-niv-estime{border-color:#a0a49c;border-style:dashed;color:var(--muted);}
-.pc-niv-geocode{border-color:#1e6fd9;}
 .pc-borne{
   width:30px;height:30px;border-radius:50%;color:#fff;font-size:14px;font-weight:800;
   display:flex;align-items:center;justify-content:center;border:2px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,.4);
@@ -434,6 +463,9 @@ textarea{font-family:inherit;resize:vertical;}
 
 details.advanced{margin-top:10px;}
 details.advanced summary{font-size:12.5px;color:var(--accent);cursor:pointer;font-weight:700;padding:6px 0;}
+#admAvances > summary{
+  font-size:11px;text-transform:uppercase;letter-spacing:.03em;color:var(--muted);padding:4px 0 8px;
+}
 
 .geo-results{display:flex;flex-direction:column;gap:6px;margin-top:8px;}
 .geo-result{

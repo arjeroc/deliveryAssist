@@ -218,7 +218,7 @@ window.UI = (function () {
       '<button class="casier-addr" data-action="open-fiche" data-id="' + escapeHtml(row.id) + '">' +
         '<span class="casier-num">' + (numero ? escapeHtml(numero) : "—") + '</span>' +
         '<span class="casier-noms">' + escapeHtml(noms) + '</span>' +
-        (S.hasGPS(row) ? "" : '<span class="casier-flag" title="Adresse sans position GPS">⚠</span>') +
+        (S.hasPosition(row) ? "" : '<span class="casier-flag" title="Adresse sans position GPS">⚠</span>') +
       '</button>';
   }
 
@@ -235,7 +235,7 @@ window.UI = (function () {
     var e = etapes[casierIndex];
     var rues = e.rows.map(function (r) { return S.normalize(r.rue) + "|" + S.normalize(r.commune); })
       .filter(function (v, i, t) { return t.indexOf(v) === i; }).length;
-    var sansGPS = e.rows.filter(function (r) { return !S.hasGPS(r); }).length;
+    var sansGPS = e.rows.filter(function (r) { return !S.hasPosition(r); }).length;
 
     var lignes = "";
     e.rows.forEach(function (r, i) { lignes += casierLigneHTML(r, i ? e.rows[i - 1] : null); });
@@ -269,9 +269,10 @@ window.UI = (function () {
     var etapes = casierEtapes();
     if (!etapes.length) return;
     clampCasierIndex(etapes);
-    var points = etapes[casierIndex].rows.filter(S.hasGPS).map(function (r) {
+    var points = etapes[casierIndex].rows.filter(S.hasPosition).map(function (r) {
+      var pos = S.positionUtile(r);
       return {
-        id: r.id, lat: Number(r.latitude), lon: Number(r.longitude),
+        id: r.id, lat: pos.lat, lon: pos.lon,
         color: S.getCommuneColor(r.commune), size: 14,
         popupHtml: "<strong>" + escapeHtml(S.namesOf(r).join(" / ") || "(sans nom)") + "</strong><br>" +
           escapeHtml([r.numero, r.rue].filter(Boolean).join(" ")) + "<br>" +
@@ -368,6 +369,12 @@ window.UI = (function () {
               '</div>' +
             '</div>'
           : "") +
+        (parcoursDeplie
+          ? '<div class="pc-actions">' +
+              '<button class="pc-btn" data-action="parcours-reconstruire">🔄 Reconstruire la trace</button>' +
+              '<button class="pc-btn" data-action="parcours-export">⬇ Exporter la trace (GeoJSON)</button>' +
+            '</div>'
+          : "") +
         (sansPosition
           ? '<div class="pc-alerte">' + sansPosition + ' adresse(s) sans position. ' +
               '<button class="pc-btn" data-action="parcours-geocoder">Géocoder</button></div>'
@@ -397,6 +404,38 @@ window.UI = (function () {
     });
   }
 
+  // La trace vit dans un cache tant que les positions ne bougent pas : elle se
+  // construit au chargement des données puis se tait, sans repasser par le
+  // service de routage à chaque ouverture de la carte. Ce bouton est la reprise
+  // en main : il jette le cache et refait le calcul.
+  function reconstruireParcours() {
+    Parcours.viderCacheRoute();
+    Parcours.effacer(suiviMap); // la Course refera la sienne à sa prochaine visite
+    renderMapView();
+    toast("Trace reconstruite.", "ok");
+  }
+
+  // L'export attend que la trace routière soit disponible : sans cela, un
+  // export lancé juste après un import livrerait des lignes droites d'étape à
+  // étape là où le cache aurait donné le tracé des routes. Si le routage est
+  // hors service, on exporte quand même — en lignes directes, ce que la
+  // propriété « routee » du fichier dit sans ambiguïté.
+  function exporterTrace() {
+    toast("Préparation de la trace…");
+    Parcours.preparer().then(function () {
+      var geo = Parcours.geojson();
+      if (!geo.features.length) {
+        toast("Aucun segment traçable : les adresses n'ont pas encore de position.", "warn");
+        return;
+      }
+      telecharger(
+        JSON.stringify(geo, null, 2),
+        "application/geo+json",
+        S.getIdTournee() + "_trace_" + S.todayISO() + ".geojson");
+      toast(geo.features.length + " segment(s) exporté(s).", "ok");
+    });
+  }
+
   function openAdmin() { els.adminOverlay.classList.add("open"); renderAdmin(); }
   function closeAdmin() { els.adminOverlay.classList.remove("open"); }
 
@@ -408,10 +447,11 @@ window.UI = (function () {
     out += S.hasCasier(row)
       ? '<span class="tag tag-ok">' + escapeHtml(S.casierLabel(row)) + '</span>'
       : '<span class="tag tag-warn">Hors casier</span>';
-    out += S.hasGPS(row)
+    out += S.hasPosition(row)
       ? '<span class="tag tag-ok">📍 GPS</span>'
       : '<span class="tag tag-warn">⚠ GPS manquant</span>';
     if (row.geocode_statut === "geocode") out += '<span class="tag tag-info">à vérifier</span>';
+    if (S.hasReleve(row) && row.geocode_statut !== "verifie") out += '<span class="tag tag-info">relevé terrain</span>';
     if (S.isStopPub(row)) out += '<span class="tag tag-stoppub">🚫 Stop Pub</span>';
     return out;
   }
@@ -551,10 +591,11 @@ window.UI = (function () {
         '<div class="kv"><span>GPS</span><strong>' +
           (S.hasGPS(row) ? escapeHtml(Number(row.latitude).toFixed(5) + ", " + Number(row.longitude).toFixed(5)) : '<span class="muted">manquant</span>') +
         '</strong></div>' +
+        releveKvHTML(row) +
         '<div class="quick-actions">' +
-          '<button data-action="voir-carte" ' + (S.hasGPS(row) ? "" : "disabled") + '>📍 Voir sur carte</button>' +
+          '<button data-action="voir-carte" ' + (S.hasPosition(row) ? "" : "disabled") + '>📍 Voir sur carte</button>' +
           '<button data-action="ma-position">🎯 Ma position</button>' +
-          '<button data-action="itineraire" ' + (S.hasGPS(row) ? "" : "disabled") + '>🧭 Itinéraire</button>' +
+          '<button data-action="itineraire" ' + (S.hasPosition(row) ? "" : "disabled") + '>🧭 Itinéraire</button>' +
         '</div>' +
       '</section>' +
 
@@ -890,27 +931,54 @@ window.UI = (function () {
   // ---------------------------------------------------------------------
   // Actions géo (position actuelle / itinéraire / géocodage / voir carte)
   // ---------------------------------------------------------------------
+
+  // Le relevé de terrain se lit sur la fiche même quand il n'a pas été promu :
+  // c'est là qu'on décide, en connaissance de cause, de l'officialiser ou pas.
+  function releveKvHTML(row) {
+    var r = S.releveInfo(row);
+    if (!r) return "";
+    var jour = (r.date || "").slice(0, 10);
+    var detail = [
+      r.precision === null ? "" : "± " + Math.round(r.precision) + " m",
+      "score " + r.score.toFixed(2),
+      jour
+    ].filter(Boolean).join(" · ");
+    var tag = r.score >= S.SCORE_SUR ? "tag-ok" : "tag-info";
+    return '<div class="kv"><span>Relevé terrain</span><strong>' +
+      escapeHtml(r.lat.toFixed(5) + ", " + r.lon.toFixed(5)) +
+      ' <span class="tag ' + tag + '">' + escapeHtml(detail) + '</span></strong></div>';
+  }
+
+  // Relevé posé à la main : le seul geste autorisé à écraser un point déjà
+  // vérifié. La capture automatique de la Course, elle, s'interdit d'y toucher.
   function useMyPosition(targetIsDraft) {
     if (!navigator.geolocation) { toast("Géolocalisation non disponible sur cet appareil.", "err"); return; }
     toast("Recherche de la position…");
     navigator.geolocation.getCurrentPosition(function (pos) {
-      var lat = pos.coords.latitude.toFixed(6), lon = pos.coords.longitude.toFixed(6);
+      var lat = pos.coords.latitude, lon = pos.coords.longitude, prec = pos.coords.accuracy;
       if (targetIsDraft) {
-        editDraft.latitude = lat; editDraft.longitude = lon; editDraft.geocode_statut = "verifie";
+        editDraft.latitude = lat.toFixed(6);
+        editDraft.longitude = lon.toFixed(6);
+        editDraft.geocode_statut = "verifie";
+        editDraft.lat_relevee = editDraft.latitude;
+        editDraft.lon_relevee = editDraft.longitude;
+        editDraft.precision_m = isNaN(Number(prec)) ? "" : String(Math.round(prec));
+        editDraft.releve_le = new Date().toISOString();
         renderFicheEdit(editDraft);
       } else {
-        S.updateRow(currentFicheId, { latitude: lat, longitude: lon, geocode_statut: "verifie" });
+        S.enregistrerReleveManuel(currentFicheId, lat, lon, prec);
         renderFicheView(S.findRow(currentFicheId));
       }
-      toast("Position enregistrée.", "ok");
+      toast("Position enregistrée" + (isNaN(Number(prec)) ? "" : " (± " + Math.round(prec) + " m)") + ".", "ok");
     }, function (err) {
       toast("Impossible d'obtenir la position (" + err.message + ").", "err");
     }, { enableHighAccuracy: true, timeout: 8000 });
   }
 
   function openItineraire(row) {
-    if (!S.hasGPS(row)) return;
-    var url = "https://www.google.com/maps/dir/?api=1&destination=" + row.latitude + "," + row.longitude;
+    var pos = S.positionUtile(row);
+    if (!pos) return;
+    var url = "https://www.google.com/maps/dir/?api=1&destination=" + pos.lat + "," + pos.lon;
     window.open(url, "_blank");
   }
 
@@ -920,7 +988,7 @@ window.UI = (function () {
   // on arrive sur la carte avec le contexte de préparation déjà en place, plutôt
   // que sur un point isolé dont on ignore à quel moment de la tournée il tombe.
   function voirSurCarte(row) {
-    if (!S.hasGPS(row)) return;
+    if (!S.hasPosition(row)) return;
     var etapes = casierEtapes();
     for (var i = 0; i < etapes.length; i++) {
       if (etapes[i].rows.some(function (r) { return r.id === row.id; })) { casierIndex = i; break; }
@@ -959,8 +1027,18 @@ window.UI = (function () {
   }
 
   // ---------------------------------------------------------------------
-  // Page 2 — Préparation tournée (lettres/colis du jour, séparés de la base)
+  // Page 2 — Préparation tournée (séparée de la base d'adresses)
+  //
+  // Deux gestes de nature différente, donc deux modes, jamais mélangés :
+  //
+  //   « Objets standard » — on désigne des *zones* : les cases de casier dont
+  //     les rues recevront du courrier ordinaire. Un appui par ligne de casier
+  //     couvre des dizaines d'adresses ; rien ne se compte à l'unité.
+  //   « Objets suivis »   — on attribue des *objets* à une adresse précise :
+  //     colis, lettres suivies, presse. Chacun se compte, se valide et se
+  //     justifie s'il n'est pas distribué.
   // ---------------------------------------------------------------------
+  var prepMode = "standard";  // 'standard' | 'suivis'
   var prepFilter = "toutes"; // 'toutes' | 'tournee'
 
   // Adresse désignée par une proposition de recherche ou par le scan.
@@ -979,6 +1057,18 @@ window.UI = (function () {
       btn.classList.toggle("active", btn.getAttribute("data-prepfilter") === f);
     });
     renderPrep();
+  }
+
+  function setPrepMode(mode) {
+    prepMode = mode;
+    ["standard", "suivis"].forEach(function (m) {
+      document.getElementById("prep-mode-" + m).classList.toggle("active", m === mode);
+    });
+    els.prepModeNav.querySelectorAll("[data-prepmode]").forEach(function (btn) {
+      btn.classList.toggle("active", btn.getAttribute("data-prepmode") === mode);
+    });
+    renderPrep();
+    window.scrollTo(0, 0);
   }
 
   function prepCardHTML(row, entry, query) {
@@ -1035,12 +1125,161 @@ window.UI = (function () {
       return '<div class="commune-summary-row">' +
         '<span class="commune-dot" style="background:' + S.getCommuneColor(c) + ';"></span>' +
         '<span class="commune-summary-name">' + escapeHtml(c) + '</span>' +
-        '<span class="commune-summary-figures">' + t.adresses + ' adr. ' + itemBadgesHTML(t) + '</span>' +
+        '<span class="commune-summary-figures">' + t.adresses + ' adr. ' + itemBadgesHTML(t, true) + '</span>' +
       '</div>';
     }).join("") + '</div>';
   }
 
+  // --- mode « Objets standard » : une carte par colonne de casier ------------
+  //
+  // La colonne est l'unité que la main atteint d'un seul mouvement devant le
+  // casier ; on la fait donc défiler du doigt, une carte à la fois, plutôt que
+  // d'empiler cinq colonnes dans une page à faire rouler. À l'intérieur, chaque
+  // ligne se résume à ses deux bornes — première et dernière rue — parce que
+  // c'est ainsi qu'on la reconnaît en la regardant : par où elle commence, par
+  // où elle finit.
+  var prepZoneIndex = 0;
+  var prepZoneSwipeStartX = null;
+  var prepZoneSwipeStartY = null;
+
+  function clampPrepZoneIndex(colonnes) {
+    if (!colonnes.length) { prepZoneIndex = 0; return; }
+    if (prepZoneIndex < 0) prepZoneIndex = 0;
+    if (prepZoneIndex > colonnes.length - 1) prepZoneIndex = colonnes.length - 1;
+  }
+
+  // Les bornes d'une ligne : deux rues, ou une seule quand la ligne n'en
+  // contient qu'une — répéter le même nom des deux côtés ne dirait rien.
+  function zoneBornesHTML(ligne) {
+    if (!ligne.derniereRue || ligne.premiereRue === ligne.derniereRue) {
+      return '<span class="zl-rue">' + escapeHtml(ligne.premiereRue) + '</span>';
+    }
+    return '<span class="zl-rue">' + escapeHtml(ligne.premiereRue) + '</span>' +
+      '<span class="zl-fleche">→</span>' +
+      '<span class="zl-rue">' + escapeHtml(ligne.derniereRue) + '</span>';
+  }
+
+  function zoneLigneHTML(idT, ligne) {
+    var retenue = Prep.isZoneStandard(idT, ligne.cle);
+    // La case garde toujours son numéro de ligne : c'est par lui qu'on la
+    // retrouve dans le casier. L'état retenu se dit par la couleur et par la
+    // coche en fin de ligne, jamais en effaçant l'identité de la case.
+    return '<button class="zone-ligne' + (retenue ? " retenue" : "") + '" ' +
+        'data-action="prep-zone-basculer" data-cle="' + escapeHtml(ligne.cle) + '" ' +
+        'aria-pressed="' + retenue + '">' +
+      '<span class="zl-case">L' + ligne.l + '</span>' +
+      '<span class="zl-corps">' +
+        '<span class="zl-bornes">' + zoneBornesHTML(ligne) + '</span>' +
+        '<span class="zl-meta">' +
+          '<span class="commune-dot" style="background:' + S.getCommuneColor(ligne.commune) + ';"></span>' +
+          escapeHtml(ligne.commune || "commune inconnue") +
+          ' · ' + ligne.nbAdresses + ' adr · ' + ligne.nbRues + (ligne.nbRues > 1 ? " rues" : " rue") +
+        '</span>' +
+      '</span>' +
+      '<span class="zl-coche">' + (retenue ? "✓" : "") + '</span>' +
+    '</button>';
+  }
+
+  function bindPrepZoneSwipe() {
+    var el = document.getElementById("prepZoneCardSwipe");
+    if (!el) return;
+    el.addEventListener("touchstart", function (ev) {
+      var t = ev.changedTouches[0];
+      prepZoneSwipeStartX = t.clientX;
+      prepZoneSwipeStartY = t.clientY;
+    }, { passive: true });
+    el.addEventListener("touchend", function (ev) {
+      if (prepZoneSwipeStartX === null) return;
+      var t = ev.changedTouches[0];
+      var dx = t.clientX - prepZoneSwipeStartX;
+      var dy = t.clientY - prepZoneSwipeStartY;
+      prepZoneSwipeStartX = null;
+      if (Math.abs(dx) < 40 || Math.abs(dx) < Math.abs(dy) * 1.5) return;
+      prepZoneNav(dx < 0 ? 1 : -1);
+    }, { passive: true });
+  }
+
+  function prepZoneNav(delta) {
+    prepZoneIndex += delta;
+    renderPrepZones();
+  }
+
+  // Tout retenir / tout relâcher sur la colonne affichée : devant le casier,
+  // une colonne entière de courrier standard est un cas courant.
+  function prepZoneColonneBasculer() {
+    var colonnes = S.casierColonnes();
+    clampPrepZoneIndex(colonnes);
+    var col = colonnes[prepZoneIndex];
+    if (!col) return;
+    var idT = S.getIdTournee();
+    var toutes = col.lignes.every(function (li) { return Prep.isZoneStandard(idT, li.cle); });
+    col.lignes.forEach(function (li) { Prep.setZoneStandard(idT, li.cle, !toutes); });
+    renderPrep();
+  }
+
+  function prepZoneBasculer(cle) {
+    Prep.toggleZoneStandard(S.getIdTournee(), cle);
+    renderPrep();
+  }
+
+  function renderPrepZones() {
+    var idT = S.getIdTournee();
+    var colonnes = S.casierColonnes();
+    var retenues = Prep.countZonesStandard(idT);
+    var adressesRetenues = 0;
+    colonnes.forEach(function (col) {
+      col.lignes.forEach(function (li) {
+        if (Prep.isZoneStandard(idT, li.cle)) adressesRetenues += li.nbAdresses;
+      });
+    });
+
+    els.prepZonesTotals.innerHTML =
+      '<div class="totals-line"><strong>' + retenues + '</strong> zone(s) de courrier standard · ' +
+        '<strong>' + adressesRetenues + '</strong> adresse(s)</div>' +
+      '<div class="totals-sub">Tournée « ' + escapeHtml(idT) + ' »</div>';
+
+    if (!colonnes.length) {
+      els.prepZonesWrap.innerHTML = '<div class="empty">' +
+        "Aucune case de casier dans la base. Importe un CSV renseignant les colonnes " +
+        "<code>casier_c</code> et <code>casier_l</code> depuis les réglages (⚙️)." +
+      '</div>';
+      return;
+    }
+
+    clampPrepZoneIndex(colonnes);
+    var col = colonnes[prepZoneIndex];
+    var retenuesCol = col.lignes.filter(function (li) { return Prep.isZoneStandard(idT, li.cle); }).length;
+    var toutes = retenuesCol === col.lignes.length;
+
+    els.prepZonesWrap.innerHTML =
+      '<div class="casier-nav">' +
+        '<button class="tournee-nav-btn" data-action="prep-zone-prev" ' + (prepZoneIndex === 0 ? "disabled" : "") + ' aria-label="Colonne précédente">‹</button>' +
+        '<div class="tournee-index">Colonne ' + escapeHtml(col.label) + ' · ' + (prepZoneIndex + 1) + ' / ' + colonnes.length + '</div>' +
+        '<button class="tournee-nav-btn" data-action="prep-zone-next" ' + (prepZoneIndex === colonnes.length - 1 ? "disabled" : "") + ' aria-label="Colonne suivante">›</button>' +
+      '</div>' +
+      '<div class="casier-card zone-card" id="prepZoneCardSwipe">' +
+        '<div class="casier-head">' +
+          '<div class="casier-label">' + escapeHtml(col.label) + '</div>' +
+          '<div class="casier-meta">' + col.lignes.length + (col.lignes.length > 1 ? " lignes" : " ligne") + ' · ' + col.nbAdresses + ' adr' +
+            (retenuesCol ? ' · <strong>' + retenuesCol + ' retenue' + (retenuesCol > 1 ? "s" : "") + '</strong>' : "") +
+          '</div>' +
+          '<button class="pc-btn zone-tout" data-action="prep-zone-colonne">' +
+            (toutes ? "Tout relâcher" : "Tout retenir") +
+          '</button>' +
+        '</div>' +
+        '<div class="zone-lignes">' +
+          col.lignes.map(function (li) { return zoneLigneHTML(idT, li); }).join("") +
+        '</div>' +
+      '</div>' +
+      '<div class="zone-aide">Une ligne retenue devient une zone de distribution du courrier standard, ' +
+        'reprise telle quelle dans l\'onglet Course.</div>';
+
+    bindPrepZoneSwipe();
+  }
+
   function renderPrep() {
+    if (prepMode === "standard") { renderPrepZones(); return; }
+
     var idT = S.getIdTournee();
     var totals = Prep.totals(idT);
     els.btnScan.style.display = (S.getSettings().scanActif === false) ? "none" : "block";
@@ -1049,7 +1288,7 @@ window.UI = (function () {
       Prep.TYPES.map(function (t) {
         return '<strong>' + totals[t.key] + '</strong> ' + t.icon;
       }).join(" · ") + '</div>' +
-      '<div class="totals-sub">Tournée « ' + escapeHtml(idT) + ' »</div>';
+      '<div class="totals-sub">Objets suivis · Tournée « ' + escapeHtml(idT) + ' »</div>';
 
     els.prepCommuneSummary.innerHTML = (prepFilter === "tournee") ? communeSummaryHTML(idT) : "";
 
@@ -1164,13 +1403,13 @@ window.UI = (function () {
 
   // Deux niveaux de lecture, jamais le même poids graphique :
   //
-  //   zone    → combien d'adresses, où en est la zone  → pastille pleine
-  //   adresse → quels objets, en quelle quantité       → « ×3 » discret
+  //   adresse → ce qu'il faut sortir de la sacoche ici  → pastille pleine
+  //   résumé  → combien il en reste au total            → « ×3 » discret
   //
-  // Le « 3 » de trois colis et le « 3 » de trois adresses ne veulent pas dire
-  // la même chose ; leur donner la même pastille noire les faisait confondre.
-  // Le nombre reste visible dès qu'il dépasse 1 — c'est ce qui compte — mais
-  // il ne réclame plus l'attention réservée au niveau supérieur.
+  // C'est le nombre de l'adresse qu'on lit en marchant vers une boîte aux
+  // lettres : trois colis pour ce numéro-là, c'est trois gestes à ne pas
+  // oublier. Les totaux d'une zone ou de la tournée, eux, se consultent — ils
+  // reprennent donc la notation du menu « Résumé », discrète et uniforme.
   function itemBadgesHTML(entry, discret) {
     return Prep.TYPES.map(function (t) {
       var n = entry[t.key] || 0;
@@ -1200,8 +1439,9 @@ window.UI = (function () {
   function naviguerVers(addrId) {
     var row = S.findRow(addrId);
     if (!row) return;
-    if (S.hasGPS(row)) {
-      ouvrirItineraire(row.latitude + "," + row.longitude);
+    var pos = S.positionUtile(row);
+    if (pos) {
+      ouvrirItineraire(pos.lat + "," + pos.lon);
       return;
     }
     var dest = [row.numero, row.rue, row.code_postal, row.commune].filter(Boolean).join(" ");
@@ -1236,6 +1476,54 @@ window.UI = (function () {
     });
   }
 
+  // Relevé automatique du point de livraison.
+  //
+  // Il part *après* la validation et ne la retient jamais : une tournée ne
+  // s'interrompt pas parce qu'un GPS hésite, et un refus de géolocalisation
+  // reste sans conséquence. Rien n'est signalé par un toast : celui de la
+  // validation porte le « Annuler », et le remplacer coûterait le retour arrière.
+  //
+  // La position que la Course tient à jour n'est reprise que si elle vient
+  // d'arriver. L'ancienneté d'un point ne se lit pas dans sa précision : un
+  // relevé à 20 m pris quinze secondes plus tôt, en roulant, est faux de deux
+  // cents mètres tout en affichant un score excellent — et une fois promu, il
+  // ne se corrige plus depuis la Course. D'où cette fenêtre très courte, et un
+  // maximumAge nul sur la demande ponctuelle, pour que le navigateur ne
+  // réponde pas non plus avec un point qu'il gardait sous le coude.
+  var RELEVE_FRAICHEUR_MS = 5000;
+
+  function capterReleve(addrId) {
+    var row = S.findRow(addrId);
+    // Un point déjà vérifié ne se reprend que depuis les Données : le relever à
+    // nouveau à chaque passage ne ferait qu'ajouter du bruit à une donnée sûre.
+    if (!row || row.geocode_statut === "verifie") return;
+
+    if (suiviUserPos && suiviUserPos.horodatage &&
+        Date.now() - suiviUserPos.horodatage < RELEVE_FRAICHEUR_MS) {
+      appliquerReleve(addrId, suiviUserPos.lat, suiviUserPos.lon, suiviUserPos.accuracy);
+      return;
+    }
+    if (!navigator.geolocation) return;
+    navigator.geolocation.getCurrentPosition(function (pos) {
+      appliquerReleve(addrId, pos.coords.latitude, pos.coords.longitude, pos.coords.accuracy);
+    }, function () {
+      // Position indisponible : la livraison reste validée, sans un mot.
+    }, { enableHighAccuracy: true, timeout: 8000, maximumAge: 0 });
+  }
+
+  function appliquerReleve(addrId, lat, lon, precision) {
+    var res = S.enregistrerReleveAuto(addrId, lat, lon, precision);
+    if (!res.ok) return;
+    // Le seul retour visible tient dans la ligne d'état de la Course, qui sera
+    // de toute façon réécrite au relevé suivant.
+    if (els.suiviGeoStatus) {
+      els.suiviGeoStatus.innerHTML = suiviGeoStatusHTML(
+        (res.promu ? "📍 Position vérifiée" : "📍 Point relevé") +
+        " (± " + Math.round(precision) + " m · score " + res.score.toFixed(2) + ")",
+        res.promu ? "" : "tag-info");
+    }
+  }
+
   // ✓ et ⊘ font aussi office de retour arrière : ré-appuyer sur le bouton
   // actif remet l'adresse "à faire", sans passer par un menu.
   function addrValider(addrId) {
@@ -1244,6 +1532,10 @@ window.UI = (function () {
       applyStatut([addrId], Prep.STATUTS.A_FAIRE, "", "Adresse remise à faire.");
     } else {
       applyStatut([addrId], Prep.STATUTS.DISTRIBUE, "", "Adresse distribuée.");
+      // Une validation d'adresse est le seul geste qui vaut « je suis devant
+      // cette boîte ». La validation de zone couvre une rue entière et
+      // l'abandon peut se décider de loin : ni l'un ni l'autre ne relève.
+      capterReleve(addrId);
     }
   }
 
@@ -1307,17 +1599,26 @@ window.UI = (function () {
     return (valeur !== "" && valeur !== undefined && valeur !== null && !isNaN(Number(valeur))) ? Number(valeur) : null;
   }
 
-  // Regroupe les adresses par rue, ordonnées comme la tournée (ordre_zone puis,
-  // à égalité, nom de rue) ; à l'intérieur d'une rue, par ordre_rue puis numéro.
+  // Regroupe par rue les deux apports de la Préparation, et eux seuls :
   //
-  // En mode "distributions" on ne part que des adresses ayant des items ; en
-  // mode "complete" on parcourt toute la base, ce qui fait apparaître les zones
-  // de distribution standard, sans item enregistré.
+  //   — les adresses porteuses d'objets suivis (colis, lettres, presse) ;
+  //   — les adresses des cases de casier retenues comme zones de courrier
+  //     standard, qui forment des zones sans item à compter.
+  //
+  // Une rue qui reçoit les deux ne fait qu'une zone : elle liste ses objets
+  // suivis et signale, en pied, le reste qu'elle distribue en standard.
+  //
+  // Les rues se suivent dans l'ordre du casier — la source de vérité de la
+  // tournée — et non dans un ordre recalculé ici ; à l'intérieur d'une rue,
+  // par ordre_rue puis numéro.
   function buildTourneeGroups(idT) {
-    var complet = S.getSettings().modeSuivi === "complete";
-    var rows = complet
-      ? S.getRows()
-      : Prep.listEntries(idT).map(function (e) { return S.findRow(e.addressId); }).filter(Boolean);
+    var zonesStandard = Prep.getZonesStandard(idT);
+    var retenue = {};
+    Prep.listEntries(idT).forEach(function (e) { retenue[e.addressId] = true; });
+    S.getRows().forEach(function (r) {
+      if (S.hasCasier(r) && zonesStandard[S.casierCle(r)]) retenue[r.id] = true;
+    });
+    var rows = S.rowsOrdreTournee().filter(function (r) { return retenue[r.id]; });
 
     var groups = {};
     var order = [];
@@ -1327,13 +1628,12 @@ window.UI = (function () {
       if (!groups[key]) {
         groups[key] = {
           key: key, rue: row.rue || "(rue non renseignée)", commune: row.commune || "",
-          lieuxDits: {}, ordreZone: null, items: [], autres: 0
+          lieuxDits: {}, items: [], autres: 0
         };
         order.push(key);
       }
       var g = groups[key];
       if (row.lieu_dit) g.lieuxDits[row.lieu_dit.trim()] = true;
-      if (g.ordreZone === null) g.ordreZone = ordreDe(row.ordre_zone);
       // Dans une zone qui a des items, les adresses sans item resteraient du
       // bruit : on les compte sans les lister.
       if (Prep.countItems(entry) > 0) g.items.push({ row: row, entry: entry });
@@ -1364,14 +1664,8 @@ window.UI = (function () {
       // Cible d'itinéraire : la première adresse localisée de la zone.
       var ancre = g.items.concat([]).map(function (it) { return it.row; })
         .concat(S.getRows().filter(function (r) { return tourneeGroupKeyOf(r) === g.key; }))
-        .find(function (r) { return S.hasGPS(r); });
+        .find(function (r) { return S.hasPosition(r); });
       g.ancreId = ancre ? ancre.id : null;
-    });
-    list.sort(function (a, b) {
-      var za = a.ordreZone === null ? Infinity : a.ordreZone;
-      var zb = b.ordreZone === null ? Infinity : b.ordreZone;
-      if (za !== zb) return za - zb;
-      return a.rue.localeCompare(b.rue, "fr");
     });
     return list;
   }
@@ -1385,7 +1679,7 @@ window.UI = (function () {
   function tourneeAddrRowHTML(item) {
     var names = S.namesOf(item.row).join(" / ") || "(sans nom)";
     var label = [item.row.numero, names].filter(Boolean).join(" — ");
-    var meta = itemBadgesHTML(item.entry, true);
+    var meta = itemBadgesHTML(item.entry);
     if (item.entry.statut === Prep.STATUTS.ABANDONNE) {
       meta += '<span class="addr-motif">⊘ ' + escapeHtml(Prep.motifLabel(item.entry.motif)) + '</span>';
     }
@@ -1417,10 +1711,12 @@ window.UI = (function () {
     }, { passive: true });
   }
 
+  // Total des objets d'une zone : un résumé, donc la notation du menu
+  // « Résumé » — « ×3 » discret — et non la pastille réservée aux adresses.
   function zoneTotauxHTML(g) {
-    var faux = {};
-    Prep.TYPES.forEach(function (t) { faux[t.key] = g[t.key]; });
-    return itemBadgesHTML(faux);
+    var total = {};
+    Prep.TYPES.forEach(function (t) { total[t.key] = g[t.key]; });
+    return itemBadgesHTML(total, true);
   }
 
   function zoneProgressHTML(g) {
@@ -1461,9 +1757,8 @@ window.UI = (function () {
 
     if (!groups.length) {
       els.suiviTourneeWrap.innerHTML = '<div class="tournee-empty">' +
-        (S.getSettings().modeSuivi === "complete"
-          ? "Aucune adresse dans la base. Importe un CSV depuis les réglages (⚙️)."
-          : "Aucun item à distribuer. Ajoute des lettres, colis ou presse depuis la page Préparation, ou passe en « Tournée complète » dans les réglages.") +
+        "Rien à distribuer pour l'instant. Depuis la page Préparation, retiens des zones " +
+        "de courrier standard ou attribue des objets suivis à des adresses." +
       '</div>';
       return;
     }
@@ -1554,7 +1849,10 @@ window.UI = (function () {
     if (suiviWatchId !== null) return;
     if (!suiviUserPos) els.suiviGeoStatus.innerHTML = suiviGeoStatusHTML("Recherche de la position…");
     suiviWatchId = navigator.geolocation.watchPosition(function (pos) {
-      var suivante = { lat: pos.coords.latitude, lon: pos.coords.longitude, accuracy: pos.coords.accuracy };
+      var suivante = {
+        lat: pos.coords.latitude, lon: pos.coords.longitude,
+        accuracy: pos.coords.accuracy, horodatage: Date.now()
+      };
       var maintenant = Date.now();
       var bouge = !suiviUserPos ||
         MapView.distanceMeters(suiviUserPos.lat, suiviUserPos.lon, suivante.lat, suivante.lon) >= MAJ_MIN_M;
@@ -1584,14 +1882,6 @@ window.UI = (function () {
     }
   }
 
-  function zoneFor(distanceM) {
-    var s = S.getSettings();
-    if (distanceM <= s.rayonImmediat) return { key: "immediat", label: "Immédiat", color: "#e63946" };
-    if (distanceM <= s.rayonProche) return { key: "proche", label: "Proche", color: "#f4b400" };
-    if (distanceM <= s.rayonEloigne) return { key: "eloigne", label: "Éloigné", color: "#6b7268" };
-    return null; // hors zone : pas affiché dans la liste de proximité
-  }
-
   function fmtDistance(m) {
     return m < 1000 ? Math.round(m) + " m" : (m / 1000).toFixed(1) + " km";
   }
@@ -1601,7 +1891,7 @@ window.UI = (function () {
     var names = S.namesOf(row).join(" / ") || "(sans nom)";
     var addr = [row.numero, row.rue].filter(Boolean).join(" ");
     var lieu = S.communeLabelOf(row);
-    var objets = itemBadgesHTML(entry, true);
+    var objets = itemBadgesHTML(entry);
     if (entry.statut === Prep.STATUTS.ABANDONNE) {
       objets += '<span class="addr-motif">⊘ ' + escapeHtml(Prep.motifLabel(entry.motif)) + '</span>';
     }
@@ -1610,7 +1900,7 @@ window.UI = (function () {
         '<div class="proximity-head">' +
           '<div><div class="card-title">' + escapeHtml(names) + '</div>' +
           '<div class="card-line muted">' + escapeHtml([addr, lieu].filter(Boolean).join(" · ")) + '</div></div>' +
-          (item.zone ? '<span class="proximity-dist zone-' + item.zone.key + '">' + fmtDistance(item.distance) + '</span>' : '') +
+          (item.distance !== undefined ? '<span class="proximity-dist">' + fmtDistance(item.distance) + '</span>' : '') +
         '</div>' +
         '<div class="proximity-foot">' +
           '<div class="proximity-objects">' + objets + '</div>' +
@@ -1673,24 +1963,25 @@ window.UI = (function () {
   // soit la distance — sans quoi on ne voit pas comment la tournée se répartit —
   // et chaque pastille porte la couleur de sa commune, rien d'autre. L'état de
   // distribution ne change que l'intensité : plein pour ce qui reste, effacé
-  // pour ce qui est fait. La liste en dessous, elle, garde son filtre par rayon :
-  // c'est elle qui répond à « qu'est-ce qui est à portée de main ».
+  // pour ce qui est fait. La liste en dessous classe les mêmes adresses de la
+  // plus proche à la plus lointaine : elle répond à « qu'est-ce qui est à
+  // portée de main » sans qu'on ait à lui régler un rayon — sur le terrain,
+  // c'est l'ordre qui renseigne, pas le seuil.
   function renderSuiviCarte() {
     var idT = S.getIdTournee();
     var entries = Prep.listEntries(idT);
-    var tous = [], aProximite = [], withoutGPS = 0, horsZone = 0;
+    var tous = [], aProximite = [], withoutGPS = 0;
 
     entries.forEach(function (e) {
       var row = S.findRow(e.addressId);
       if (!row) return;
-      if (!S.hasGPS(row)) { withoutGPS++; return; }
-      var item = { row: row, entry: e };
+      var pos = S.positionUtile(row);
+      if (!pos) { withoutGPS++; return; }
+      var item = { row: row, entry: e, pos: pos };
       tous.push(item);
       if (!suiviUserPos) return;
-      item.distance = MapView.distanceMeters(suiviUserPos.lat, suiviUserPos.lon, Number(row.latitude), Number(row.longitude));
-      item.zone = zoneFor(item.distance);
-      if (item.zone) aProximite.push(item);
-      else horsZone++;
+      item.distance = MapView.distanceMeters(suiviUserPos.lat, suiviUserPos.lon, pos.lat, pos.lon);
+      aProximite.push(item);
     });
     aProximite.sort(function (a, b) { return a.distance - b.distance; });
 
@@ -1700,7 +1991,7 @@ window.UI = (function () {
       var traite = item.entry.statut !== Prep.STATUTS.A_FAIRE;
       return {
         id: item.row.id,
-        lat: Number(item.row.latitude), lon: Number(item.row.longitude),
+        lat: item.pos.lat, lon: item.pos.lon,
         color: S.getCommuneColor(item.row.commune),
         size: traite ? 11 : 15,
         creux: item.entry.statut === Prep.STATUTS.DISTRIBUE,
@@ -1717,15 +2008,7 @@ window.UI = (function () {
     var cadrer = carteVisible && !suiviCarteCadree && !suiviUserPos && points.length > 0;
     if (cadrer) suiviCarteCadree = true;
     suiviMap.renderPoints(points, { fit: cadrer });
-    if (suiviUserPos) {
-      suiviMap.setUserMarker(suiviUserPos.lat, suiviUserPos.lon, suiviUserPos.accuracy);
-      var s = S.getSettings();
-      suiviMap.drawRadiusCircles(suiviUserPos.lat, suiviUserPos.lon, [
-        { meters: s.rayonImmediat, color: "#e63946" },
-        { meters: s.rayonProche, color: "#f4b400" },
-        { meters: s.rayonEloigne, color: "#6b7268" }
-      ]);
-    }
+    if (suiviUserPos) suiviMap.setUserMarker(suiviUserPos.lat, suiviUserPos.lon, suiviUserPos.accuracy);
 
     // --- liste de proximité ---
     if (!entries.length) {
@@ -1743,19 +2026,14 @@ window.UI = (function () {
     if (!aProximite.length) {
       els.suiviProximityList.innerHTML = "";
       els.suiviEmptyState.style.display = "block";
-      els.suiviEmptyState.textContent = "Aucune adresse à proximité pour l'instant" +
-        (horsZone ? " (" + horsZone + " adresse(s) au-delà de " + fmtDistance(S.getSettings().rayonEloigne) + ")" : "") +
+      els.suiviEmptyState.textContent = "Aucune adresse localisée dans la tournée" +
         (withoutGPS ? " · " + withoutGPS + " adresse(s) sans coordonnées GPS" : "") + ".";
       return;
     }
     els.suiviEmptyState.style.display = "none";
-    var note = "";
-    if (horsZone || withoutGPS) {
-      note = '<div class="empty" style="padding:10px;">' +
-        (horsZone ? horsZone + " adresse(s) au-delà de " + fmtDistance(S.getSettings().rayonEloigne) + ". " : "") +
-        (withoutGPS ? withoutGPS + " adresse(s) sans coordonnées GPS." : "") +
-      '</div>';
-    }
+    var note = withoutGPS
+      ? '<div class="empty" style="padding:10px;">' + withoutGPS + " adresse(s) sans coordonnées GPS." + '</div>'
+      : "";
     els.suiviProximityList.innerHTML = aProximite.map(proximityCardHTML).join("") + note;
   }
 
@@ -1780,36 +2058,25 @@ window.UI = (function () {
       '<div class="field"><label>Importer un fichier CSV</label><input type="file" id="admFileInput" accept=".csv,text/csv"></div>' +
       '<div class="toolbar">' +
         '<button class="primary" data-action="admin-export">Exporter le CSV</button>' +
+        '<button data-action="admin-export-trace">Exporter la trace (GeoJSON)</button>' +
         '<button data-action="admin-sample">Charger un exemple</button>' +
         '<button class="danger" data-action="admin-clear">Vider les données</button>' +
       '</div>' +
       '<div id="adminStatus"></div>' +
       '<hr>' +
-      '<label class="switch-row"><input type="checkbox" id="admGeocodage" ' + (s.geocodageActif ? "checked" : "") + '> Activer le géocodage automatique (API adresse gouvernementale)</label>' +
-      '<label class="switch-row"><input type="checkbox" id="admScan" ' + (s.scanActif !== false ? "checked" : "") + '> Scan d\'étiquette par la caméra (expérimental)</label>' +
-      '<label class="switch-row"><input type="checkbox" id="admEtapesCarte" ' + (s.afficherEtapesCarte !== false ? "checked" : "") + '> Afficher les repères d\'étapes numérotés sur la carte</label>' +
-      '<label class="switch-row"><input type="checkbox" id="admAdressesCarte" ' + (s.afficherAdressesCarte === true ? "checked" : "") + '> Afficher les adresses sur la carte (au zoom rapproché)</label>' +
-      '<hr>' +
       '<div class="fieldset-title">Couleurs par commune</div>' +
       '<div id="communeColors">' + communeColorRowsHTML() + '</div>' +
       '<hr>' +
-      '<div class="fieldset-title">Mode d\'affichage de la Course</div>' +
-      '<div class="field">' +
-        '<select id="admModeSuivi">' +
-          '<option value="distributions"' + (s.modeSuivi !== "complete" ? " selected" : "") + '>Suivi des distributions (recommandé)</option>' +
-          '<option value="complete"' + (s.modeSuivi === "complete" ? " selected" : "") + '>Tournée complète</option>' +
-        '</select>' +
-      '</div>' +
-      '<small class="hint">« Suivi des distributions » n\'affiche que les zones ayant des items à distribuer. ' +
-      '« Tournée complète » montre aussi les zones de distribution standard, sans item enregistré.</small>' +
-      '<hr>' +
-      '<div class="fieldset-title">Rayons de proximité (Course)</div>' +
-      '<div class="radius-settings">' +
-        '<div class="field"><label>🔴 Immédiat (mètres)</label><input type="number" min="1" id="admRayonImmediat" value="' + s.rayonImmediat + '"></div>' +
-        '<div class="field"><label>🟡 Proche (mètres)</label><input type="number" min="1" id="admRayonProche" value="' + s.rayonProche + '"></div>' +
-        '<div class="field"><label>⚪ Éloigné (mètres, au-delà = masqué)</label><input type="number" min="1" id="admRayonEloigne" value="' + s.rayonEloigne + '"></div>' +
-      '</div>' +
-      '<small class="hint">Séparateur des noms multiples&nbsp;: <code>|</code>. Les données restent uniquement dans ce navigateur.</small>';
+      // Les options techniques ne servent qu'une fois : au réglage initial, ou
+      // le jour où l'une d'elles déçoit. Les laisser dépliées dans la page
+      // ferait passer chaque jour devant des cases auxquelles on ne touche pas.
+      '<details class="advanced" id="admAvances">' +
+        '<summary>Réglages avancés</summary>' +
+        '<label class="switch-row"><input type="checkbox" id="admGeocodage" ' + (s.geocodageActif ? "checked" : "") + '> Activer le géocodage automatique (API adresse gouvernementale)</label>' +
+        '<label class="switch-row"><input type="checkbox" id="admScan" ' + (s.scanActif !== false ? "checked" : "") + '> Scan d\'étiquette par la caméra (expérimental)</label>' +
+        '<label class="switch-row"><input type="checkbox" id="admAdressesCarte" ' + (s.afficherAdressesCarte === true ? "checked" : "") + '> Afficher les adresses sur la carte (au zoom rapproché)</label>' +
+        '<small class="hint">Séparateur des noms multiples&nbsp;: <code>|</code>. Les données restent uniquement dans ce navigateur.</small>' +
+      '</details>';
   }
 
   function showAdminStatus(kind, text) {
@@ -1818,14 +2085,33 @@ window.UI = (function () {
     el.innerHTML = text ? '<div class="status ' + kind + '">' + escapeHtml(text) + '</div>' : "";
   }
 
+  // Jeu d'essai : vingt adresses, des noms inventés mais une géographie réelle.
+  // Il porte tout ce que l'application doit savoir tenir — position vérifiée,
+  // relevé de terrain non promu, adresse sans position, hors casier, deux
+  // communes à relier et l'écart rural qui les sépare. Aucune donnée de tournée
+  // réelle n'entre dans le dépôt : le fichier de travail y reste étranger.
   var SAMPLE_CSV =
-'id,id_tournee,nom_famille,numero,rue,code_postal,commune,lieu_dit,latitude,longitude,geocode_statut,casier_c,casier_l,ordre_zone,ordre_rue,position_manuelle,type_objet,notes,stoppub,date_maj\n' +
-'tm002-0001,tm002,MOODY,5,RUE DU MEMORIAL,16260,CHASSENEUIL-SUR-BONNIEURE,,45.6155,0.4801,manuel,"1","1",1,1,,lettre,,false,\n' +
-'tm002-0002,tm002,OBZAI|NONNIN|DELAUGE|DELMOTTE,9-2,RUE DU MEMORIAL,16260,CHASSENEUIL-SUR-BONNIEURE,,,,,"1","1",1,2,,lettre,,true,\n' +
-'tm002-0003,tm002,NEBOUT,8,RUE DU MEMORIAL,16260,CHASSENEUIL-SUR-BONNIEURE,,45.6152,0.4801,manuel,"1","1",1,3,,lettre,batterie,false,\n' +
-'tm002-0004,tm002,CHEZ FOUR,4,ROUTE DU PUITS,16700,LA TACHE,Chez Four,45.6180,0.4801,manuel,,,30,1,,lettre,,false,\n' +
-'tm002-0005,tm002,CHEZ FOUR,3,ROUTE DU PUITS,16700,LA TACHE,Chez Four,45.6250,0.4801,manuel,,,30,2,,lettre,,true,\n' +
-'tm002-0006,tm002,CHEZ FOUR,1,ROUTE DU PUITS,16700,LA TACHE,Chez Four,,,,,,30,3,,lettre,,false,\n';
+'id,id_tournee,nom_famille,numero,rue,code_postal,commune,lieu_dit,latitude,longitude,geocode_statut,lat_relevee,lon_relevee,precision_m,releve_le,casier_c,casier_l,ordre_zone,ordre_rue,position_manuelle,type_objet,notes,stoppub,date_maj\n' +
+'tm002-0001,tm002,MARTIN,5,RUE DU MEMORIAL,16260,CHASSENEUIL-SUR-BONNIEURE,,45.822892,0.447845,verifie,45.822892,0.447845,12,2026-09-04T09:12:00.000Z,1,1,1,1,,lettre,,false,2026-09-04\n' +
+'tm002-0002,tm002,DUBOIS|LEROY|GIRARD,9-2,RUE DU MEMORIAL,16260,CHASSENEUIL-SUR-BONNIEURE,,,,,,,,,1,1,1,2,,lettre,,true,2026-09-04\n' +
+'tm002-0003,tm002,PETIT,8,RUE DU MEMORIAL,16260,CHASSENEUIL-SUR-BONNIEURE,,45.823310,0.448120,geocode,45.823295,0.448210,68,2026-09-04T09:19:00.000Z,1,1,1,3,,lettre,batterie,false,2026-09-04\n' +
+'tm002-0004,tm002,ROUSSEL,,LE CHATEAU,16260,CHASSENEUIL-SUR-BONNIEURE,LE CHATEAU,45.820024,0.439499,geocode,,,,,1,1,8,8,,colis,portail vert,false,2026-09-04\n' +
+'tm002-0005,tm002,FONTAINE,13,RUE DU MEMORIAL,16260,CHASSENEUIL-SUR-BONNIEURE,,45.823001,0.446780,geocode,,,,,1,2,21,7,,lettre,,false,2026-09-04\n' +
+'tm002-0006,tm002,BONNET,16,RUE DE CELLEFROUIN,16260,CHASSENEUIL-SUR-BONNIEURE,,45.824075,0.447159,geocode,,,,,1,2,24,2,,lettre,,true,2026-09-04\n' +
+'tm002-0007,tm002,MOREAU,19,ROUTE DE CELLEFROUIN,16260,CHASSENEUIL-SUR-BONNIEURE,,45.837796,0.442022,geocode,,,,,1,2,30,5,,presse,,false,2026-09-04\n' +
+'tm002-0008,tm002,LAURENT,4,MONTEE DU CHATEAU,16260,CELLEFROUIN,CHEZ CASTERNAUD,45.887271,0.394959,geocode,,,,,1,2,86,1,,lettre,,false,2026-09-04\n' +
+'tm002-0009,tm002,GARNIER,7,RUE DE LA FIFAUDET,16260,CELLEFROUIN,LA FORET,45.886385,0.408040,geocode,45.886402,0.408015,22,2026-09-04T11:02:00.000Z,1,3,90,5,,lettre,,false,2026-09-04\n' +
+'tm002-0010,tm002,CHEVALIER,1,IMPASSE DES ELOTS,16260,CELLEFROUIN,LES ELOTS,45.890127,0.390784,geocode,,,,,1,3,100,5,,colis,,false,2026-09-04\n' +
+'tm002-0011,tm002,ROBIN,2,ROUTE DES GRANGES,16260,CELLEFROUIN,CHEZ PICAUD,45.888423,0.390453,geocode,,,,,1,3,105,10,,lettre,chien,false,2026-09-04\n' +
+'tm002-0012,tm002,MASSON,7,LE MAS DES ELOTS,16260,CELLEFROUIN,LE MAS DES ELOTS,45.890461,0.388870,geocode,,,,,1,3,108,2,,lettre,,true,2026-09-04\n' +
+'tm002-0013,tm002,BRUN,43,ROUTE DE MANSLE,16260,CELLEFROUIN,LE BOURG DE CELLEFROUIN,45.891376,0.390093,geocode,,,,,1,4,118,1,,lettre,,false,2026-09-04\n' +
+'tm002-0014,tm002,RENARD,2,LA MATASSE,16260,CELLEFROUIN,MOULIN DE LA MATASSE,45.893237,0.405618,geocode,,,,,1,4,138,6,,presse,,false,2026-09-04\n' +
+'tm002-0015,tm002,COLIN,11,GRAND RUE,16260,CELLEFROUIN,LASCOUX,45.892404,0.417685,geocode,,,,,1,4,140,8,,lettre,,false,2026-09-04\n' +
+'tm002-0016,tm002,VIDAL,19,GRAND RUE,16260,CELLEFROUIN,LASCOUX,45.892453,0.418585,geocode,,,,,2,1,144,12,,lettre,,false,2026-09-04\n' +
+'tm002-0017,tm002,NOEL,4,RUE DU LAVOIR,16260,CELLEFROUIN,,45.891706,0.418520,geocode,,,,,2,1,146,1,,lettre,,false,2026-09-04\n' +
+'tm002-0018,tm002,PERRIN,6,LA RUETTE,16260,CELLEFROUIN,,,,,,,,,2,1,161,1,,lettre,adresse à repérer,false,2026-09-04\n' +
+'tm002-0019,tm002,LEFEVRE,38,RUE DES ECOLES,16260,CHASSENEUIL-SUR-BONNIEURE,,45.823936,0.443162,geocode,,,,,,,22,1,,lettre,,false,2026-09-04\n' +
+'tm002-0020,tm002,BERGER,6,RUE DU MONTET,16260,CHASSENEUIL-SUR-BONNIEURE,CHEZ GIRAUDEAU,45.825941,0.441750,geocode,,,,,,,30,2,,lettre,,false,2026-09-04\n';
 
   function bindAdminEvents() {
     document.getElementById("admIdTournee").addEventListener("change", function (e) {
@@ -1850,7 +2136,12 @@ window.UI = (function () {
         if (res.warnings.length) msg += " " + res.warnings.length + " avertissement(s).";
         showAdminStatus(res.errors.length ? "err" : (res.warnings.length ? "warn" : "ok"), msg);
         casierIndex = 0;
+        prepZoneIndex = 0;
         renderSearch();
+        // La trace de la tournée se construit ici, au chargement des données,
+        // et se met en cache : les jours suivants n'y reviennent pas.
+        Parcours.viderCacheRoute();
+        Parcours.preparer();
       };
       reader.readAsText(file, "UTF-8");
       ev.target.value = "";
@@ -1865,23 +2156,6 @@ window.UI = (function () {
     document.getElementById("admAdressesCarte").addEventListener("change", function (e) {
       S.setSetting("afficherAdressesCarte", e.target.checked);
       Parcours.rafraichirAffichage();
-    });
-    document.getElementById("admEtapesCarte").addEventListener("change", function (e) {
-      S.setSetting("afficherEtapesCarte", e.target.checked);
-      Parcours.rafraichirAffichage();
-    });
-    document.getElementById("admModeSuivi").addEventListener("change", function (e) {
-      S.setSetting("modeSuivi", e.target.value);
-      tourneeIndex = 0;
-      renderSuivi();
-    });
-    [["admRayonImmediat", "rayonImmediat"], ["admRayonProche", "rayonProche"], ["admRayonEloigne", "rayonEloigne"]].forEach(function (pair) {
-      document.getElementById(pair[0]).addEventListener("change", function (e) {
-        var v = Math.max(1, Math.round(Number(e.target.value) || 1));
-        S.setSetting(pair[1], v);
-        e.target.value = v;
-        renderSuivi();
-      });
     });
     document.querySelectorAll("#communeColors input[type=color]").forEach(function (el) {
       el.addEventListener("change", function () {
@@ -1951,11 +2225,15 @@ window.UI = (function () {
       case "admin-export":
         exportCSV();
         break;
+      case "admin-export-trace":
+        exportGeoJSONAdmin();
+        break;
       case "admin-sample":
         if (S.getRows().length && !confirmAction("Remplacer les données actuelles par l'exemple ?")) return;
         var res = S.importFromCSV(SAMPLE_CSV);
         showAdminStatus("ok", "Exemple chargé (" + res.count + " lignes).");
         casierIndex = 0;
+        prepZoneIndex = 0;
         renderSearch();
         break;
       case "admin-clear":
@@ -1963,6 +2241,7 @@ window.UI = (function () {
         S.setRows([]);
         showAdminStatus("ok", "Données vidées.");
         casierIndex = 0;
+        prepZoneIndex = 0;
         renderSearch();
         break;
       case "open-admin":
@@ -1986,6 +2265,18 @@ window.UI = (function () {
       case "prep-cible-effacer":
         prepViderCible();
         renderPrep();
+        break;
+      case "prep-zone-basculer":
+        prepZoneBasculer(actionEl.getAttribute("data-cle"));
+        break;
+      case "prep-zone-colonne":
+        prepZoneColonneBasculer();
+        break;
+      case "prep-zone-prev":
+        prepZoneNav(-1);
+        break;
+      case "prep-zone-next":
+        prepZoneNav(1);
         break;
       case "prep-remove":
         if (confirmAction("Retirer cette adresse de la préparation de tournée ?")) {
@@ -2053,6 +2344,12 @@ window.UI = (function () {
       case "parcours-geocoder":
         geocoderParcours();
         break;
+      case "parcours-reconstruire":
+        reconstruireParcours();
+        break;
+      case "parcours-export":
+        exporterTrace();
+        break;
       case "scan-open":
         // Le scan ne fait que désigner une adresse : il la cible dans la
         // préparation, où les compteurs sont déjà sous le pouce.
@@ -2076,8 +2373,9 @@ window.UI = (function () {
         if (chipInput) chipInput.focus();
         break;
       case "prep-new-tournee":
-        if (confirmAction('Vider la préparation de la tournée "' + S.getIdTournee() + '" ? Les adresses de la base ne sont pas affectées, seules les quantités lettres/colis sont effacées.')) {
+        if (confirmAction('Vider la préparation de la tournée "' + S.getIdTournee() + '" ? Les adresses de la base ne sont pas affectées : seules les zones de courrier standard et les quantités d\'objets suivis sont effacées.')) {
           Prep.resetTournee(S.getIdTournee());
+          prepZoneIndex = 0;
           renderPrep();
           tourneeIndex = 0;
           toast("Nouvelle tournée : préparation vidée.", "ok");
@@ -2086,18 +2384,37 @@ window.UI = (function () {
     }
   }
 
-  function exportCSV() {
-    var csv = S.exportCSVText();
-    var blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  function telecharger(contenu, type, nom) {
+    var blob = new Blob([contenu], { type: type + ";charset=utf-8;" });
     var url = URL.createObjectURL(blob);
     var a = document.createElement("a");
     a.href = url;
-    a.download = S.getIdTournee() + "_tournee_" + S.todayISO() + ".csv";
+    a.download = nom;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
     setTimeout(function () { URL.revokeObjectURL(url); }, 2000);
+  }
+
+  function exportCSV() {
+    telecharger(S.exportCSVText(), "text/csv",
+      S.getIdTournee() + "_tournee_" + S.todayISO() + ".csv");
     showAdminStatus("ok", "Export généré (" + S.getRows().length + " lignes).");
+  }
+
+  function exportGeoJSONAdmin() {
+    showAdminStatus("", "Préparation de la trace…");
+    Parcours.preparer().then(function () {
+      var geo = Parcours.geojson();
+      if (!geo.features.length) {
+        showAdminStatus("warn", "Aucun segment traçable : les adresses n'ont pas encore de position.");
+        return;
+      }
+      telecharger(
+        JSON.stringify(geo, null, 2), "application/geo+json",
+        S.getIdTournee() + "_trace_" + S.todayISO() + ".geojson");
+      showAdminStatus("ok", "Trace exportée (" + geo.features.length + " segment(s)).");
+    });
   }
 
   // ---------------------------------------------------------------------
@@ -2132,6 +2449,9 @@ window.UI = (function () {
     els.prepEmptyState = document.getElementById("prepEmptyState");
     els.prepTotals = document.getElementById("prepTotals");
     els.prepSubNav = document.getElementById("prepSubNav");
+    els.prepModeNav = document.getElementById("prepModeNav");
+    els.prepZonesTotals = document.getElementById("prepZonesTotals");
+    els.prepZonesWrap = document.getElementById("prepZonesWrap");
     els.prepCommuneSummary = document.getElementById("prepCommuneSummary");
 
     els.suiviProgress = document.getElementById("suiviProgress");
@@ -2148,6 +2468,7 @@ window.UI = (function () {
       handleClick(e);
       if (e.target.closest("[data-dbview]")) showView(e.target.closest("[data-dbview]").getAttribute("data-dbview"));
       if (e.target.closest("[data-mainpage]")) showMainPage(e.target.closest("[data-mainpage]").getAttribute("data-mainpage"));
+      if (e.target.closest("[data-prepmode]")) setPrepMode(e.target.closest("[data-prepmode]").getAttribute("data-prepmode"));
       if (e.target.closest("[data-prepfilter]")) setPrepFilter(e.target.closest("[data-prepfilter]").getAttribute("data-prepfilter"));
       if (e.target.closest("[data-suivitab]")) setSuiviTab(e.target.closest("[data-suivitab]").getAttribute("data-suivitab"));
     });

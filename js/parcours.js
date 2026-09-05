@@ -23,12 +23,28 @@ window.Parcours = (function () {
   var PREC_KEY = "atournee_geoprec_v1";  // précision du géocodage, par adresse
   var ROUTE_KEY = "atournee_route_v1";   // trace routière mise en cache
 
-  // Seuils de zoom des trois niveaux de lecture.
-  var ZOOM_NUMEROS = 12;
+  // Seuils de zoom des niveaux de lecture.
+  var ZOOM_FLECHES = 13;
+
+  // Longueur minimale d'un tronçon pour mériter un chevron de sens. Sans ce
+  // seuil, les cent cinquante tronçons d'une vraie tournée poseraient autant de
+  // chevrons, et la trace disparaîtrait sous ses propres flèches.
+  var FLECHE_MIN_M = 150;
   var ZOOM_ADRESSES = 15;
 
   // Deux ancres plus proches que ça sont considérées comme un même lieu.
   var FUSION_M = 40;
+
+  // Deux étapes consécutives séparées par plus d'une vingtaine de minutes de
+  // route ne se suivent pas : c'est un trou dans la donnée, pas un trajet. La
+  // trace s'y interrompt et reprend au point suivant, plutôt que de tirer un
+  // trait à travers le département et de fausser toutes les distances.
+  var COUPURE_MINUTES = 25;
+  var VITESSE_MOYENNE_KMH = 50;
+
+  function coupureMetres() {
+    return VITESSE_MOYENNE_KMH * 1000 * (COUPURE_MINUTES / 60);
+  }
 
   var COULEURS = {
     reel: "#2f6b4f",
@@ -60,14 +76,23 @@ window.Parcours = (function () {
     try { localStorage.setItem(PREC_KEY, JSON.stringify(precisions)); } catch (e) { /* ignore */ }
   }
 
-  // Niveau de confiance d'une adresse, du plus sûr au plus flou.
-  function niveauDe(row) {
-    if (!S.hasGPS(row)) return null;
-    if (row.geocode_statut !== "geocode") return "reel";
+  // Un géocodage est dit approché quand il ne descend pas au numéro ou à la
+  // rue : il pose alors le point au centre de la commune. C'est le seul cas où
+  // un relevé de terrain vaut mieux que lui — store.js le demande ici.
+  function geocodageApproche(row) {
     var t = precisions[row.id];
-    if (t === "housenumber" || t === "street") return "geocode";
-    if (!t) return "geocode"; // géocodage antérieur, précision inconnue
-    return "approx";          // locality, municipality, poi…
+    if (!t) return false;     // géocodage antérieur, précision inconnue : au bénéfice du doute
+    return t !== "housenumber" && t !== "street";
+  }
+
+  // Niveau de confiance d'une adresse, du plus sûr au plus flou. Il porte sur
+  // la position que la carte emploie vraiment, pas sur les seules colonnes
+  // latitude/longitude : un relevé de terrain est une position tenue.
+  function niveauDe(row) {
+    var pos = S.positionUtile(row);
+    if (!pos) return null;
+    if (pos.source === "verifie" || pos.source === "releve") return "reel";
+    return geocodageApproche(row) ? "approx" : "geocode";
   }
 
   // ---------------------------------------------------------------------
@@ -102,8 +127,8 @@ window.Parcours = (function () {
     for (var n = 0; n < niveaux.length; n++) {
       var membres = etape.adresses.filter(function (r) { return niveauDe(r) === niveaux[n]; });
       if (!membres.length) continue;
-      etape.lat = mediane(membres.map(function (r) { return Number(r.latitude); }));
-      etape.lon = mediane(membres.map(function (r) { return Number(r.longitude); }));
+      etape.lat = mediane(membres.map(function (r) { return S.positionUtile(r).lat; }));
+      etape.lon = mediane(membres.map(function (r) { return S.positionUtile(r).lon; }));
       etape.niveau = niveaux[n];
       return;
     }
@@ -204,9 +229,10 @@ window.Parcours = (function () {
   // Statistiques
   // ---------------------------------------------------------------------
   function distanceVolOiseau(points) {
-    var d = 0;
+    var d = 0, seuil = coupureMetres();
     for (var i = 1; i < points.length; i++) {
-      d += window.MapView.distanceMeters(points[i - 1].lat, points[i - 1].lon, points[i].lat, points[i].lon);
+      var l = window.MapView.distanceMeters(points[i - 1].lat, points[i - 1].lon, points[i].lat, points[i].lon);
+      if (l <= seuil) d += l;
     }
     return d;
   }
@@ -369,7 +395,7 @@ window.Parcours = (function () {
       v = {
         map: carte,
         calques: {
-          trace: L.layerGroup(), numeros: L.layerGroup(),
+          trace: L.layerGroup(), fleches: L.layerGroup(),
           communes: L.layerGroup(), adresses: L.layerGroup()
         }
       };
@@ -459,19 +485,86 @@ window.Parcours = (function () {
     };
   }
 
-  function dessinerTrace(v, points, trace) {
-    v.calques.trace.clearLayers();
-    for (var i = 1; i < points.length; i++) {
-      var geom = (trace && trace.troncons[i - 1] && trace.troncons[i - 1].length > 1)
-        ? trace.troncons[i - 1]
-        : [[points[i - 1].lat, points[i - 1].lon], [points[i].lat, points[i].lon]];
-      var style = styleTroncon(points[i - 1], points[i]);
-      L.polyline(geom, v.leger ? allegerStyle(style) : style).addTo(v.calques.trace);
-    }
+  // Géométrie d'un tronçon : le tracé routier s'il a été obtenu, la ligne
+  // directe sinon.
+  function geomTroncon(points, trace, i) {
+    var t = trace && trace.troncons && trace.troncons[i - 1];
+    if (t && t.length > 1) return t;
+    return [[points[i - 1].lat, points[i - 1].lon], [points[i].lat, points[i].lon]];
   }
 
+  function longueurTroncon(points, trace, i) {
+    var d = trace && trace.distances && trace.distances[i - 1];
+    if (typeof d === "number" && d > 0) return d;
+    return window.MapView.distanceMeters(points[i - 1].lat, points[i - 1].lon, points[i].lat, points[i].lon);
+  }
+
+  // La trace n'est pas une ligne mais une suite de segments continus. Elle
+  // s'interrompt sur deux motifs, et ne comble ni l'un ni l'autre :
+  //   - une étape dont la position n'est qu'estimée : il n'y a rien à relier ;
+  //   - un saut plus long qu'un trajet plausible entre deux boîtes.
+  // Renvoie les indices des points de chaque segment, les isolés écartés.
+  function segmentsTrace(points, trace) {
+    var segments = [], courant = null, seuil = coupureMetres();
+    points.forEach(function (p, i) {
+      if (p.niveau === "estime") { courant = null; return; }
+      if (courant && longueurTroncon(points, trace, i) > seuil) courant = null;
+      if (!courant) { courant = []; segments.push(courant); }
+      courant.push(i);
+    });
+    return segments.filter(function (s) { return s.length > 1; });
+  }
+
+  // Cap entre deux points, en degrés depuis le nord.
+  function cap(lat1, lon1, lat2, lon2) {
+    var rad = Math.PI / 180;
+    var dLon = (lon2 - lon1) * rad;
+    var y = Math.sin(dLon) * Math.cos(lat2 * rad);
+    var x = Math.cos(lat1 * rad) * Math.sin(lat2 * rad) -
+            Math.sin(lat1 * rad) * Math.cos(lat2 * rad) * Math.cos(dLon);
+    return (Math.atan2(y, x) / rad + 360) % 360;
+  }
+
+  // Sens de parcours : un chevron au milieu du tronçon, orienté par le cap
+  // local. L'orienter sur les deux extrémités le ferait pointer à travers
+  // champs dès que la route tourne.
+  function poserFleche(v, geom, couleur) {
+    var m = Math.max(1, Math.floor(geom.length / 2));
+    var a = geom[m - 1], b = geom[m];
+    if (!a || !b) return;
+    var angle = cap(a[0], a[1], b[0], b[1]);
+    L.marker([(a[0] + b[0]) / 2, (a[1] + b[1]) / 2], {
+      icon: L.divIcon({
+        className: "",
+        html: '<div class="pc-fleche" style="transform:rotate(' + angle.toFixed(0) +
+              'deg);border-bottom-color:' + couleur + '"></div>',
+        iconSize: [16, 16], iconAnchor: [8, 8]
+      }),
+      interactive: false,
+      zIndexOffset: 400
+    }).addTo(v.calques.fleches);
+  }
+
+  function dessinerTrace(v, points, trace) {
+    v.calques.trace.clearLayers();
+    v.calques.fleches.clearLayers();
+    segmentsTrace(points, trace).forEach(function (segment) {
+      for (var k = 1; k < segment.length; k++) {
+        var i = segment[k];
+        var geom = geomTroncon(points, trace, i);
+        var style = styleTroncon(points[i - 1], points[i]);
+        L.polyline(geom, v.leger ? allegerStyle(style) : style).addTo(v.calques.trace);
+        if (!v.leger && longueurTroncon(points, trace, i) >= FLECHE_MIN_M) {
+          poserFleche(v, geom, style.color);
+        }
+      }
+    });
+  }
+
+  // Départ, arrivée, changements de commune. Les numéros d'étape ont été
+  // retirés : dans les Données, la carte sert à lire la forme de la tournée,
+  // et le détail d'une adresse s'ouvre depuis la case de casier, pas d'ici.
   function dessinerReperes(v, points) {
-    v.calques.numeros.clearLayers();
     v.calques.communes.clearLayers();
     var total = modele.etapes.length;
 
@@ -502,10 +595,6 @@ window.Parcours = (function () {
           .bindPopup(contenu)
           .addTo(v.calques.communes);
       }
-
-      L.marker([p.lat, p.lon], {
-        icon: icone(String(e.rang), "pc-num pc-niv-" + (p.niveau || "estime"), 24)
-      }).bindPopup(contenu).addTo(v.calques.numeros);
     });
   }
 
@@ -518,7 +607,8 @@ window.Parcours = (function () {
     modele.rows.forEach(function (r) {
       var niveau = niveauDe(r);
       if (!niveau) return;
-      var m = L.circleMarker([Number(r.latitude), Number(r.longitude)], {
+      var pos = S.positionUtile(r);
+      var m = L.circleMarker([pos.lat, pos.lon], {
         radius: 4, weight: 1, color: "#fff", fillColor: COULEURS[niveau], fillOpacity: 1
       });
       var noms = S.namesOf(r).join(" / ") || "(sans nom)";
@@ -530,14 +620,13 @@ window.Parcours = (function () {
     });
   }
 
-  // Trois niveaux de lecture : la forme générale de loin, les numéros d'étape
+  // Trois niveaux de lecture : la forme générale de loin, le sens de parcours
   // en approchant, les adresses seulement au plus près — et seulement si
   // l'utilisateur les a demandées dans les réglages.
   function appliquerZoom(v) {
     if (!v || !v.map) return;
     var z = v.map.getZoom();
-    basculer(v, v.calques.numeros,
-      !v.leger && S.getSettings().afficherEtapesCarte !== false && z >= ZOOM_NUMEROS);
+    basculer(v, v.calques.fleches, !v.leger && z >= ZOOM_FLECHES);
     var montrerAdresses = !v.leger && S.getSettings().afficherAdressesCarte === true && z >= ZOOM_ADRESSES;
     if (montrerAdresses) dessinerAdresses(v);
     basculer(v, v.calques.adresses, montrerAdresses);
@@ -616,11 +705,93 @@ window.Parcours = (function () {
 
   function distanceRoutee(trace) {
     if (!trace || !trace.distances || !trace.distances.length) return 0;
-    return trace.distances.reduce(function (a, b) { return a + b; }, 0);
+    var seuil = coupureMetres();
+    return trace.distances.reduce(function (a, b) { return b > seuil ? a : a + b; }, 0);
   }
+
+  // Construction de la trace hors de tout affichage : appelée au chargement
+  // des données et avant un export. Le routage se met en cache sous une clé
+  // qui porte l'empreinte des coordonnées ; tant qu'aucune position ne bouge,
+  // les appels suivants ne coûtent rien et aucun jour ne refait le calcul.
+  function preparer() {
+    modele = construire();
+    var points = pointsTrace();
+    if (points.length < 2) return Promise.resolve(null);
+    return router(points).catch(function () { return null; });
+  }
+
+  // ---------------------------------------------------------------------
+  // Export GeoJSON
+  // ---------------------------------------------------------------------
+  function pousserCoord(coords, lat, lon) {
+    var lonR = Number(lon.toFixed(6)), latR = Number(lat.toFixed(6));
+    var dernier = coords[coords.length - 1];
+    if (dernier && dernier[0] === lonR && dernier[1] === latR) return;
+    coords.push([lonR, latR]);
+  }
+
+  // Une LineString par segment continu. Les interruptions ne sont pas comblées :
+  // elles se lisent dans le fichier exactement comme sur la carte, et aucune
+  // coordonnée inventée n'y entre — une étape seulement estimée en est exclue.
+  function geojson() {
+    // Toujours reconstruit : un export décrit les données du moment, pas le
+    // dernier affichage — sans quoi un import suivi d'un export livrerait la
+    // tournée précédente. Seul le tracé routier est repris du cache, dont la
+    // clé porte l'empreinte des coordonnées et se périme donc d'elle-même.
+    modele = construire();
+    var points = pointsTrace();
+    var trace = lireCacheRoute(cleCache(points));
+
+    var features = segmentsTrace(points, trace).map(function (segment, n) {
+      var coords = [], longueur = 0;
+      for (var k = 1; k < segment.length; k++) {
+        var i = segment[k];
+        geomTroncon(points, trace, i).forEach(function (c) { pousserCoord(coords, c[0], c[1]); });
+        longueur += longueurTroncon(points, trace, i);
+      }
+      var depart = points[segment[0]].etapes[0];
+      var arrivee = points[segment[segment.length - 1]].etapes[0];
+      return {
+        type: "Feature",
+        properties: {
+          segment: n + 1,
+          etapes: segment.length,
+          etape_depart: depart.rang,
+          etape_arrivee: arrivee.rang,
+          depart: S.communeLabel(depart.commune, depart.lieuDit) + " — " + depart.rue,
+          arrivee: S.communeLabel(arrivee.commune, arrivee.lieuDit) + " — " + arrivee.rue,
+          distance_m: Math.round(longueur),
+          routee: !!(trace && trace.troncons && trace.troncons.length)
+        },
+        geometry: { type: "LineString", coordinates: coords }
+      };
+    });
+
+    return {
+      type: "FeatureCollection",
+      properties: {
+        id_tournee: S.getIdTournee(),
+        genere_le: new Date().toISOString(),
+        adresses: modele.rows.length,
+        etapes: modele.etapes.length,
+        segments: features.length,
+        coupure_minutes: COUPURE_MINUTES,
+        vitesse_moyenne_kmh: VITESSE_MOYENNE_KMH
+      },
+      features: features
+    };
+  }
+
+  // store.js arbitre entre un relevé de terrain et un géocodage, mais la
+  // finesse d'un géocodage n'est connue que d'ici. On la lui met à disposition
+  // dès le chargement du module, avant tout affichage.
+  chargerPrecisions();
+  S.setResolveurGeocodageApproche(geocodageApproche);
 
   return {
     construire: construire,
+    preparer: preparer,
+    geojson: geojson,
     resume: resume,
     afficher: afficher,
     effacer: effacer,

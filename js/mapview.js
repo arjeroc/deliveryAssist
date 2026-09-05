@@ -52,7 +52,7 @@ window.MapView = (function () {
   function createInstance() {
     var map = null;
     var markersLayer = null;
-    var extraLayer = null; // cercles de rayon, marqueur position actuelle…
+    var extraLayer = null; // marqueur de position actuelle et son halo de précision
     var markersById = {};
     var onSelectCallback = null;
     var userMarker = null;
@@ -128,18 +128,6 @@ window.MapView = (function () {
       }).addTo(extraLayer);
     }
 
-    function drawRadiusCircles(lat, lon, radii) {
-      if (!map) return;
-      extraLayer.eachLayer(function (l) { if (l._radiusRing) extraLayer.removeLayer(l); });
-      radii.forEach(function (r) {
-        var circle = L.circle([lat, lon], {
-          radius: r.meters, color: r.color, weight: 1.5, fillOpacity: 0.04, dashArray: "4,4"
-        });
-        circle._radiusRing = true;
-        circle.addTo(extraLayer);
-      });
-    }
-
     function fitPoints(points, maxZoom) {
       if (!map || !points.length) return;
       try {
@@ -161,7 +149,6 @@ window.MapView = (function () {
       invalidateSize: invalidateSize,
       renderPoints: renderPoints,
       setUserMarker: setUserMarker,
-      drawRadiusCircles: drawRadiusCircles,
       centerOn: centerOn,
       fitPoints: fitPoints,
       onSelect: onSelect

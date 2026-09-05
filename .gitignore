@@ -1,0 +1,8 @@
+# Outillage local de l'assistant : configuration de poste, jamais du projet.
+.claude/
+
+# Résidus de systèmes de fichiers et de synchronisation kDrive.
+.DS_Store
+Thumbs.db
+desktop.ini
+*~

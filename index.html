@@ -71,25 +71,40 @@
 
   <!-- ================= PAGE 2 : PRÉPARATION TOURNÉE ================= -->
   <div class="page" id="page-prep">
-    <div class="prep-totals" id="prepTotals"></div>
 
-    <div class="subnav" id="prepSubNav">
-      <button data-prepfilter="toutes" class="active">Toutes les adresses</button>
-      <button data-prepfilter="tournee">Dans la tournée</button>
+    <div class="subnav" id="prepModeNav">
+      <button data-prepmode="standard" class="active">📮 Objets standard</button>
+      <button data-prepmode="suivis">📦 Objets suivis</button>
     </div>
 
-    <div id="prepCommuneSummary"></div>
+    <!-- Mode 1 : zones de courrier standard, désignées case de casier par case -->
+    <div class="prep-mode active" id="prep-mode-standard">
+      <div class="prep-totals" id="prepZonesTotals"></div>
+      <div id="prepZonesWrap"></div>
+    </div>
 
-    <div class="search-wrap">
-      <div class="search-row">
-        <input type="text" id="prepSearchBox" placeholder="🔎 Cibler une adresse…" autocomplete="off">
-        <button class="btn-scan" data-action="scan-open" aria-label="Scanner une étiquette">📷</button>
+    <!-- Mode 2 : objets suivis, attribués adresse par adresse -->
+    <div class="prep-mode" id="prep-mode-suivis">
+      <div class="prep-totals" id="prepTotals"></div>
+
+      <div class="subnav" id="prepSubNav">
+        <button data-prepfilter="toutes" class="active">Toutes les adresses</button>
+        <button data-prepfilter="tournee">Dans la tournée</button>
       </div>
-      <div class="suggest" id="prepSuggest"></div>
-    </div>
 
-    <div id="prepList"></div>
-    <div class="empty" id="prepEmptyState" style="display:none;"></div>
+      <div id="prepCommuneSummary"></div>
+
+      <div class="search-wrap">
+        <div class="search-row">
+          <input type="text" id="prepSearchBox" placeholder="🔎 Cibler une adresse…" autocomplete="off">
+          <button class="btn-scan" data-action="scan-open" aria-label="Scanner une étiquette">📷</button>
+        </div>
+        <div class="suggest" id="prepSuggest"></div>
+      </div>
+
+      <div id="prepList"></div>
+      <div class="empty" id="prepEmptyState" style="display:none;"></div>
+    </div>
 
     <div class="prep-actions">
       <button class="danger" data-action="prep-new-tournee">🔄 Nouvelle tournée (vider la préparation)</button>
