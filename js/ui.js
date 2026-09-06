@@ -644,6 +644,9 @@ window.UI = (function () {
         '<h3>🗂️ Tri de tournée</h3>' +
         '<div class="kv"><span>Colonne</span><strong>' + (escapeHtml(row.casier_c) || "—") + '</strong></div>' +
         '<div class="kv"><span>Ligne</span><strong>' + (escapeHtml(row.casier_l) || "—") + '</strong></div>' +
+        (S.getSettings().multiTournees === true
+          ? '<div class="kv"><span>Tournée</span><strong>' + escapeHtml(row.id_tournee || "—") + '</strong></div>'
+          : "") +
         '<div class="kv"><span>Casier</span><strong>' + escapeHtml(S.casierLabelEtape(row)) + '</strong></div>' +
         '<div class="kv"><span>Position dans la tournée</span>' + positionBadge(row) + '</div>' +
       '</section>' +
@@ -712,6 +715,9 @@ window.UI = (function () {
 
       '<section class="fiche-section">' +
         '<h3>🗂️ Tri de tournée</h3>' +
+        // La tournée se choisit avant la case : deux fichiers peuvent porter la
+        // même C1L3, et rien d'autre ne dirait auquel des deux l'adresse revient.
+        ficheTourneeHTML(row) +
         '<div class="grid2">' +
           '<div class="field"><label>Colonne (1-5)</label><input type="number" min="1" max="5" data-field="casier_c" value="' + escapeHtml(row.casier_c) + '"></div>' +
           '<div class="field"><label>Ligne (1-4)</label><input type="number" min="1" max="4" data-field="casier_l" value="' + escapeHtml(row.casier_l) + '"></div>' +
@@ -924,6 +930,29 @@ window.UI = (function () {
       return;
     }
     if (row) renderFicheView(row); else showView("search");
+  }
+
+  // Sous empilement, une adresse doit dire de quelle tournée elle est : sa case
+  // ne suffit plus à la situer, puisque plusieurs fichiers peuvent porter la
+  // même. Le champ liste les fichiers chargés ; l'adresse en cours garde le sien
+  // même s'il ne figure plus dans la pile, pour ne pas la déplacer en silence.
+  function ficheTourneeHTML(row) {
+    if (S.getSettings().multiTournees !== true) return "";
+    var fichiers = S.getFichiers();
+    if (!fichiers.length) return "";
+    var courant = row.id_tournee || "";
+    var options = fichiers.map(function (f) {
+      return '<option value="' + escapeHtml(f.id) + '"' + (f.id === courant ? " selected" : "") + '>' +
+        escapeHtml(f.id) + '</option>';
+    });
+    if (courant && !fichiers.some(function (f) { return f.id === courant; })) {
+      options.unshift('<option value="' + escapeHtml(courant) + '" selected>' +
+        escapeHtml(courant) + ' (absent de la pile)</option>');
+    }
+    return '<div class="field">' +
+      '<label>Tournée</label>' +
+      '<select data-field="id_tournee">' + options.join("") + '</select>' +
+    '</div>';
   }
 
   function readFormIntoDraft() {
@@ -1180,6 +1209,49 @@ window.UI = (function () {
   // c'est ainsi qu'on la reconnaît en la regardant : par où elle commence, par
   // où elle finit.
   var prepZoneIndex = 0;
+  // Tournée dont on prépare les colonnes. Vide = toutes, seul cas possible hors
+  // empilement. Sous empilement, le sélecteur en désigne une, et la navigation
+  // C1 → C2 → … se fait alors dans son casier à elle.
+  var prepFichierId = "";
+
+  // Le fichier choisi peut disparaître — retiré, renommé, vidé. On retombe alors
+  // sur le premier de la pile plutôt que sur une préparation vide sans raison
+  // visible.
+  function prepFichierCourant() {
+    if (S.getSettings().multiTournees !== true) return "";
+    var fichiers = S.getFichiers();
+    if (!fichiers.length) return "";
+    var existe = fichiers.some(function (f) { return f.id === prepFichierId; });
+    if (!existe) prepFichierId = fichiers[0].id;
+    return prepFichierId;
+  }
+
+  function prepColonnes() {
+    var id = prepFichierCourant();
+    return id ? S.casierColonnes(id) : S.casierColonnes();
+  }
+
+  function prepSelecteurTourneeHTML() {
+    var fichiers = S.getFichiers();
+    if (S.getSettings().multiTournees !== true || fichiers.length < 2) return "";
+    var courant = prepFichierCourant();
+    return '<div class="prep-tournee">' +
+        '<label for="prepTourneeSel">Tournée</label>' +
+        '<select id="prepTourneeSel">' +
+          fichiers.map(function (f) {
+            return '<option value="' + escapeHtml(f.id) + '"' + (f.id === courant ? " selected" : "") + '>' +
+              escapeHtml(f.id) + ' · ' + f.count + ' adr' + '</option>';
+          }).join("") +
+        '</select>' +
+        '<span class="prep-tournee-pastille" style="background:' + S.getTourneeColor(courant) + '"></span>' +
+      '</div>';
+  }
+
+  function setPrepFichier(id) {
+    prepFichierId = id;
+    prepZoneIndex = 0;
+    renderPrep();
+  }
   var prepZoneSwipeStartX = null;
   var prepZoneSwipeStartY = null;
 
@@ -1252,7 +1324,7 @@ window.UI = (function () {
   // Tout retenir / tout relâcher sur la colonne affichée : devant le casier,
   // une colonne entière de courrier standard est un cas courant.
   function prepZoneColonneBasculer() {
-    var colonnes = S.casierColonnes();
+    var colonnes = prepColonnes();
     clampPrepZoneIndex(colonnes);
     var col = colonnes[prepZoneIndex];
     if (!col) return;
@@ -1269,7 +1341,7 @@ window.UI = (function () {
 
   function renderPrepZones() {
     var idT = S.getIdTournee();
-    var colonnes = S.casierColonnes();
+    var colonnes = prepColonnes();
     var retenues = Prep.countZonesStandard(idT);
     var adressesRetenues = 0;
     colonnes.forEach(function (col) {
@@ -1283,11 +1355,17 @@ window.UI = (function () {
         '<strong>' + adressesRetenues + '</strong> adresse(s)</div>' +
       '<div class="totals-sub">Tournée « ' + escapeHtml(idT) + ' »</div>';
 
+    var selecteur = prepSelecteurTourneeHTML();
+
     if (!colonnes.length) {
-      els.prepZonesWrap.innerHTML = '<div class="empty">' +
-        "Aucune case de casier dans la base. Importe un CSV renseignant les colonnes " +
-        "<code>casier_c</code> et <code>casier_l</code> depuis les réglages (⚙️)." +
+      els.prepZonesWrap.innerHTML = selecteur + '<div class="empty">' +
+        (prepFichierCourant()
+          ? "Aucune case de casier retenue pour la tournée « " + escapeHtml(prepFichierCourant()) +
+            " ». Vérifie ses zones intégrées dans les réglages (⚙️)."
+          : "Aucune case de casier dans la base. Importe un CSV renseignant les colonnes " +
+            "<code>casier_c</code> et <code>casier_l</code> depuis les réglages (⚙️).") +
       '</div>';
+      bindPrepTournee();
       return;
     }
 
@@ -1297,14 +1375,15 @@ window.UI = (function () {
     var toutes = retenuesCol === col.lignes.length;
 
     els.prepZonesWrap.innerHTML =
+      selecteur +
       '<div class="casier-nav">' +
         '<button class="tournee-nav-btn" data-action="prep-zone-prev" ' + (prepZoneIndex === 0 ? "disabled" : "") + ' aria-label="Colonne précédente">‹</button>' +
-        '<div class="tournee-index">Colonne ' + escapeHtml(col.label) + ' · ' + (prepZoneIndex + 1) + ' / ' + colonnes.length + '</div>' +
+        '<div class="tournee-index">Colonne C' + col.c + ' · ' + (prepZoneIndex + 1) + ' / ' + colonnes.length + '</div>' +
         '<button class="tournee-nav-btn" data-action="prep-zone-next" ' + (prepZoneIndex === colonnes.length - 1 ? "disabled" : "") + ' aria-label="Colonne suivante">›</button>' +
       '</div>' +
       '<div class="casier-card zone-card" id="prepZoneCardSwipe">' +
         '<div class="casier-head">' +
-          '<div class="casier-label">' + escapeHtml(col.label) + '</div>' +
+          '<div class="casier-label">C' + col.c + '</div>' +
           '<div class="casier-meta">' + col.lignes.length + (col.lignes.length > 1 ? " lignes" : " ligne") + ' · ' + col.nbAdresses + ' adr' +
             (retenuesCol ? ' · <strong>' + retenuesCol + ' retenue' + (retenuesCol > 1 ? "s" : "") + '</strong>' : "") +
           '</div>' +
@@ -1320,6 +1399,12 @@ window.UI = (function () {
         'reprise telle quelle dans l\'onglet Course.</div>';
 
     bindPrepZoneSwipe();
+    bindPrepTournee();
+  }
+
+  function bindPrepTournee() {
+    var sel = document.getElementById("prepTourneeSel");
+    if (sel) sel.addEventListener("change", function () { setPrepFichier(sel.value); });
   }
 
   function renderPrep() {
@@ -2260,39 +2345,112 @@ window.UI = (function () {
   // pour la même chose — le glisser-déposer sous la souris, deux flèches sous
   // le pouce — parce qu'aucun des deux ne suffit seul sur un terminal qu'on
   // tient d'une main.
+  // --- cartes des fichiers de tournée ---------------------------------------
+  //
+  // Un fichier n'est pas qu'une ligne dans une pile : c'est un identifiant de
+  // tournée, une couleur de trace, une place dans l'ordre de passage, et un jeu
+  // de cases dont toutes ne sont pas forcément du jour. Tout cela tient sur une
+  // carte, une par fichier, qu'on fait défiler comme les colonnes du casier.
+  //
+  // L'identifiant de tournée appartient donc au fichier, et se change ici.
+  var fichierIndex = 0;      // carte affichée
+  var fichierZonesDepliees = false;
+
+  function clampFichierIndex(fichiers) {
+    if (!fichiers.length) { fichierIndex = 0; return; }
+    if (fichierIndex < 0) fichierIndex = 0;
+    if (fichierIndex > fichiers.length - 1) fichierIndex = fichiers.length - 1;
+  }
+
+  // Les cases du fichier, en grille : une colonne par ligne d'écran, ses cases
+  // à cocher à la suite. Cocher, c'est intégrer la case à la tournée.
+  function fichierZonesHTML(f) {
+    var colonnes = S.colonnesDuFichier(f.id);
+    if (!colonnes.length) {
+      return '<div class="muted small">Ce fichier ne renseigne aucune case de casier.</div>';
+    }
+    var zones = S.zonesDuFichier(f.id);
+    var retenues = zones.filter(function (z) { return z.integree; }).length;
+    var toutes = retenues === zones.length;
+    return '<div class="fz-entete">' +
+        '<span class="fz-compte"><strong>' + retenues + '</strong> / ' + zones.length + ' case(s) dans la tournée</span>' +
+        '<button class="pile-btn fz-tout" data-action="fichier-zones-toutes" data-id="' + escapeHtml(f.id) + '"' +
+          ' data-etat="' + (toutes ? "1" : "0") + '">' +
+          (toutes ? "Tout décocher" : "Tout cocher") +
+        '</button>' +
+      '</div>' +
+      colonnes.map(function (col) {
+        var toutesCol = col.zones.every(function (z) { return z.integree; });
+        return '<div class="fz-colonne">' +
+          '<button class="fz-col-btn" data-action="fichier-zones-colonne" data-id="' + escapeHtml(f.id) + '"' +
+            ' data-col="' + col.c + '" data-etat="' + (toutesCol ? "1" : "0") + '"' +
+            ' aria-label="' + (toutesCol ? "Décocher" : "Cocher") + ' toute la colonne ' + col.label + '">' +
+            escapeHtml(col.label) +
+          '</button>' +
+          '<div class="fz-cases">' +
+            col.zones.map(function (z) {
+              return '<label class="fz-case' + (z.integree ? " on" : "") + '">' +
+                '<input type="checkbox" data-zone-fichier="' + escapeHtml(f.id) + '"' +
+                  ' data-zone="' + escapeHtml(z.cle) + '"' + (z.integree ? " checked" : "") + '>' +
+                '<span>L' + z.l + '</span>' +
+                '<small>· ' + z.nbAdresses + '</small>' +
+              '</label>';
+            }).join("") +
+          '</div>' +
+        '</div>';
+      }).join("");
+  }
+
+  function fichierCardHTML(f, i, total) {
+    var id = escapeHtml(f.id);
+    return '<div class="casier-nav">' +
+        '<button class="tournee-nav-btn" data-action="fichier-prec"' + (i === 0 ? " disabled" : "") +
+          ' aria-label="Fichier précédent">‹</button>' +
+        '<div class="tournee-index">Fichier ' + (i + 1) + ' / ' + total + '</div>' +
+        '<button class="tournee-nav-btn" data-action="fichier-suiv"' + (i === total - 1 ? " disabled" : "") +
+          ' aria-label="Fichier suivant">›</button>' +
+      '</div>' +
+      '<div class="fichier-card" id="fichierCardSwipe" data-id="' + id + '">' +
+        '<div class="fc-entete">' +
+          '<input type="color" class="pile-couleur" data-fichier="' + id + '"' +
+            ' value="' + S.getTourneeColor(f.id) + '" aria-label="Couleur de la trace ' + id + '">' +
+          '<div class="fc-titre">' +
+            '<div class="fc-fichier">' + escapeHtml(f.nom || "(fichier sans nom)") + '</div>' +
+            '<div class="fc-rang">' + (i + 1) + '<sup>' + (i === 0 ? "er" : "e") + '</sup> de la pile · ' +
+              f.count + ' adresse(s)</div>' +
+          '</div>' +
+          '<div class="pile-actions">' +
+            '<button class="pile-btn" data-action="fichier-monter" data-id="' + id + '"' +
+              (i === 0 ? " disabled" : "") + ' aria-label="Monter ' + id + '">↑</button>' +
+            '<button class="pile-btn" data-action="fichier-descendre" data-id="' + id + '"' +
+              (i === total - 1 ? " disabled" : "") + ' aria-label="Descendre ' + id + '">↓</button>' +
+            '<button class="pile-btn retirer" data-action="fichier-retirer" data-id="' + id + '"' +
+              ' aria-label="Retirer ' + id + '">✕</button>' +
+          '</div>' +
+        '</div>' +
+        '<div class="field fc-id">' +
+          '<label for="fcIdTournee">Identifiant de tournée</label>' +
+          '<input type="text" id="fcIdTournee" value="' + id + '" data-ancien="' + id + '" autocomplete="off">' +
+        '</div>' +
+        '<details class="advanced fc-zones"' + (fichierZonesDepliees ? " open" : "") + ' id="fcZones">' +
+          '<summary>Zones de casier intégrées</summary>' +
+          '<div id="fichierZonesWrap">' + fichierZonesHTML(f) + '</div>' +
+        '</details>' +
+      '</div>';
+  }
+
   function fichiersPileHTML() {
     var fichiers = S.getFichiers();
     if (!fichiers.length) {
       return '<div class="muted small">Aucun fichier chargé pour l\'instant.</div>';
     }
-    return '<ol class="pile-fichiers" id="pileFichiers">' + fichiers.map(function (f, i) {
-      var id = escapeHtml(f.id);
-      return '<li class="pile-item" draggable="true" data-id="' + id + '">' +
-        '<span class="pile-poignee" aria-hidden="true">⠿</span>' +
-        '<span class="pile-rang">' + (i + 1) + '</span>' +
-        // La couleur de la trace se règle là où se règle la pile : c'est le
-        // même objet — un fichier, sa place, son trait sur la carte.
-        '<input type="color" class="pile-couleur" data-fichier="' + id + '"' +
-          ' value="' + S.getTourneeColor(f.id) + '" aria-label="Couleur de la trace ' + id + '">' +
-        '<span class="pile-corps">' +
-          '<span class="pile-nom">' + id + '</span>' +
-          '<span class="pile-meta">' + f.count + ' adresse(s)' +
-            (f.nom ? ' · ' + escapeHtml(f.nom) : "") + '</span>' +
-        '</span>' +
-        '<span class="pile-actions">' +
-          '<button class="pile-btn" data-action="fichier-monter" data-id="' + id + '"' +
-            (i === 0 ? " disabled" : "") + ' aria-label="Monter ' + id + '">↑</button>' +
-          '<button class="pile-btn" data-action="fichier-descendre" data-id="' + id + '"' +
-            (i === fichiers.length - 1 ? " disabled" : "") + ' aria-label="Descendre ' + id + '">↓</button>' +
-          '<button class="pile-btn retirer" data-action="fichier-retirer" data-id="' + id + '"' +
-            ' aria-label="Retirer ' + id + '">✕</button>' +
-        '</span>' +
-      '</li>';
-    }).join("") + '</ol>';
+    clampFichierIndex(fichiers);
+    return fichierCardHTML(fichiers[fichierIndex], fichierIndex, fichiers.length);
   }
 
   // Étape 2 de l'import. Un seul fichier : le champ d'hier, qui remplace la
-  // base. Plusieurs : la pile, et un champ qui ajoute au lieu de remplacer.
+  // base. Plusieurs : les cartes de fichiers, et un champ qui ajoute au lieu de
+  // remplacer.
   function etapeFichiersHTML(multi) {
     if (!multi) {
       return '<div class="field admin-step">' +
@@ -2302,7 +2460,7 @@ window.UI = (function () {
       '</div>';
     }
     return '<div class="field admin-step">' +
-      '<div class="admin-step-title"><span class="admin-step-num">2</span>Fichiers de tournée</div>' +
+      '<div class="admin-step-title"><span class="admin-step-num">1</span>Fichiers de tournée</div>' +
       '<div id="pileFichiersWrap">' + fichiersPileHTML() + '</div>' +
       '<label class="pile-ajout" for="admFileInput">Ajouter un fichier</label>' +
       '<input type="file" id="admFileInput" accept=".csv,text/csv">' +
@@ -2314,13 +2472,124 @@ window.UI = (function () {
     '</div>';
   }
 
-  // Redessine la seule pile : le message d'import et le repli des réglages
-  // avancés survivent au réordonnancement.
+  // Redessine la seule carte affichée : le message d'import et le repli des
+  // réglages avancés survivent au réordonnancement.
   function refreshPileFichiers() {
     var wrap = document.getElementById("pileFichiersWrap");
     if (!wrap) { renderAdmin(); return; }
+    var champ = document.getElementById("fcZones");
+    fichierZonesDepliees = !!(champ && champ.open);
     wrap.innerHTML = fichiersPileHTML();
     bindPileFichiers();
+  }
+
+  // Redessine les seules cases : cocher une case ne doit pas replier le
+  // sélecteur ni faire sauter la carte sous le doigt.
+  function refreshFichierZones() {
+    var wrap = document.getElementById("fichierZonesWrap");
+    var fichiers = S.getFichiers();
+    if (!wrap || !fichiers.length) { refreshPileFichiers(); return; }
+    clampFichierIndex(fichiers);
+    wrap.innerHTML = fichierZonesHTML(fichiers[fichierIndex]);
+    bindPileFichiers();
+  }
+
+  // La trace se construit toute seule au chargement d'un fichier : en faire une
+  // étape numérotée du parcours d'import laissait croire qu'il restait un geste
+  // à poser. Il n'en reste qu'un, et seulement quand des adresses n'ont pas de
+  // position : les géocoder. C'est ce que dit cette ligne, et rien d'autre.
+  function traceEtatHTML() {
+    // Seules les adresses de la tournée comptent : une case écartée n'a pas à
+    // faire clignoter un avertissement sur une trace qui ne la traverse pas.
+    var sansPosition = S.rowsOrdreTournee().filter(function (r) { return !S.hasPosition(r); }).length;
+    var etat = sansPosition
+      ? sansPosition + " adresse(s) sans position — la trace les saute."
+      : "Trace construite au chargement, à jour.";
+    return '<div class="trace-etat' + (sansPosition ? " manque" : "") + '" id="traceEtat">' +
+        '<span class="trace-etat-pastille" aria-hidden="true">' + (sansPosition ? "⚠" : "🧭") + '</span>' +
+        '<span class="trace-etat-txt">' + escapeHtml(etat) + '</span>' +
+        '<button class="pile-btn trace-etat-btn" data-action="admin-construire-trace"' +
+          ' aria-label="Géocoder les adresses sans position et reconstruire la trace"' +
+          ' title="Géocoder les adresses sans position et reconstruire la trace">⟳</button>' +
+      '</div>' +
+      '<div id="traceStatus"></div>';
+  }
+
+  // Le panneau est rendu à l'ouverture, souvent avant tout import : sans ce
+  // rafraîchissement, il annoncerait une trace à jour sur une base qui vient de
+  // changer sous lui.
+  function refreshTraceEtat() {
+    var el = document.getElementById("traceEtat");
+    if (!el) return;
+    var neuf = document.createElement("div");
+    neuf.innerHTML = traceEtatHTML();
+    var remplacant = neuf.querySelector("#traceEtat");
+    if (remplacant) el.replaceWith(remplacant);
+  }
+
+  // L'export ne suppose plus que tout doit sortir : sous empilement, on coche
+  // les tournées à livrer. Tout est coché au départ — c'est le cas courant, et
+  // décocher est un geste plus rare que de tout prendre.
+  var exportExclus = {};
+
+  function exportSelectionHTML() {
+    var multi = S.getSettings().multiTournees === true;
+    var fichiers = S.getFichiers();
+    if (!multi || fichiers.length < 2) return "";
+    var retenus = fichiers.filter(function (f) { return !exportExclus[f.id]; }).length;
+    return '<small class="hint admin-section-hint">Tournées à exporter.</small>' +
+      '<div class="export-liste">' +
+        '<div class="fz-entete">' +
+          '<span class="fz-compte"><strong>' + retenus + '</strong> / ' + fichiers.length + ' tournée(s)</span>' +
+          '<button class="pile-btn fz-tout" data-action="export-toutes"' +
+            ' data-etat="' + (retenus === fichiers.length ? "1" : "0") + '">' +
+            (retenus === fichiers.length ? "Tout décocher" : "Tout cocher") +
+          '</button>' +
+        '</div>' +
+        fichiers.map(function (f) {
+          var id = escapeHtml(f.id);
+          return '<label class="export-ligne">' +
+            '<input type="checkbox" data-export-fichier="' + id + '"' +
+              (exportExclus[f.id] ? "" : " checked") + '>' +
+            '<span class="export-pastille" style="background:' + S.getTourneeColor(f.id) + '"></span>' +
+            '<span class="export-nom">' + id + '</span>' +
+            '<span class="export-meta">' + f.count + ' adresse(s)' +
+              (f.nom ? ' · ' + escapeHtml(f.nom) : "") + '</span>' +
+          '</label>';
+        }).join("") +
+      '</div>';
+  }
+
+  function fichiersExportes() {
+    var fichiers = S.getFichiers();
+    if (S.getSettings().multiTournees !== true || fichiers.length < 2) return [];
+    return fichiers.filter(function (f) { return !exportExclus[f.id]; }).map(function (f) { return f.id; });
+  }
+
+  function basculerToutExport(toutesCochees) {
+    S.getFichiers().forEach(function (f) {
+      if (toutesCochees) exportExclus[f.id] = true;
+      else delete exportExclus[f.id];
+    });
+    refreshExportSelection();
+  }
+
+  function refreshExportSelection() {
+    var wrap = document.getElementById("exportSelection");
+    if (!wrap) return;
+    wrap.innerHTML = exportSelectionHTML();
+    bindExportSelection();
+  }
+
+  function bindExportSelection() {
+    document.querySelectorAll("input[data-export-fichier]").forEach(function (el) {
+      el.addEventListener("change", function () {
+        var id = el.getAttribute("data-export-fichier");
+        if (el.checked) delete exportExclus[id];
+        else exportExclus[id] = true;
+        refreshExportSelection();
+      });
+    });
   }
 
   function renderAdmin() {
@@ -2329,22 +2598,19 @@ window.UI = (function () {
     els.adminBody.innerHTML =
       '<section class="admin-section">' +
         '<h2 class="admin-section-title">Import des données</h2>' +
-        '<div class="field admin-step">' +
-          '<label class="admin-step-title" for="admIdTournee"><span class="admin-step-num">1</span>Identifiant de tournée</label>' +
-          '<input type="text" id="admIdTournee" value="' + escapeHtml(S.getIdTournee()) + '">' +
-        '</div>' +
+        // Sous empilement, l'identifiant de tournée n'est plus une donnée globale :
+        // il appartient au fichier et se règle sur sa carte.
+        (multi ? "" :
+          '<div class="field admin-step">' +
+            '<label class="admin-step-title" for="admIdTournee"><span class="admin-step-num">1</span>Identifiant de tournée</label>' +
+            '<input type="text" id="admIdTournee" value="' + escapeHtml(S.getIdTournee()) + '">' +
+          '</div>') +
         etapeFichiersHTML(multi) +
-        '<div class="field admin-step">' +
-          '<div class="admin-step-title"><span class="admin-step-num">3</span>Construction de la trace</div>' +
-          '<div class="toolbar">' +
-            '<button class="primary" data-action="admin-construire-trace">🧭 Construire la trace</button>' +
-          '</div>' +
-          '<small class="hint">Géocode les adresses sans position, recalcule le parcours et met à jour le GeoJSON dessiné sur la carte.</small>' +
-          '<div id="traceStatus"></div>' +
-        '</div>' +
+        traceEtatHTML() +
       '</section>' +
       '<section class="admin-section">' +
         '<h2 class="admin-section-title">Export des données</h2>' +
+        '<div id="exportSelection">' + exportSelectionHTML() + '</div>' +
         '<div class="toolbar">' +
           '<button class="primary" data-action="admin-export">Exporter le CSV</button>' +
           '<button data-action="admin-export-trace">Exporter la trace (GeoJSON)</button>' +
@@ -2419,7 +2685,10 @@ window.UI = (function () {
 'tm002-0020,tm002,BERGER,6,RUE DU MONTET,16260,CHASSENEUIL-SUR-BONNIEURE,CHEZ GIRAUDEAU,45.825941,0.441750,geocode,,,,,,,30,2,,lettre,,false,2026-09-04\n';
 
   function bindAdminEvents() {
-    document.getElementById("admIdTournee").addEventListener("change", function (e) {
+    // Sous empilement, l'identifiant appartient à chaque fichier : ce champ
+    // global n'est pas rendu, et rien n'est à lier.
+    var champIdGlobal = document.getElementById("admIdTournee");
+    if (champIdGlobal) champIdGlobal.addEventListener("change", function (e) {
       S.setIdTournee(e.target.value.trim());
       refreshHeader();
       renderPrep();
@@ -2450,6 +2719,8 @@ window.UI = (function () {
         showAdminStatus(res.errors.length ? "err" : (res.warnings.length ? "warn" : "ok"), msg);
         suivreEmpilementDansLaPreparation(avant);
         refreshPileFichiers();
+        refreshTraceEtat();
+        refreshExportSelection();
         casierIndex = 0;
         prepZoneIndex = 0;
         refreshCommuneColors();
@@ -2478,6 +2749,7 @@ window.UI = (function () {
       basculerMultiTournees(e.target);
     });
     bindPileFichiers();
+    bindExportSelection();
     bindCommuneColorEvents();
   }
 
@@ -2566,63 +2838,107 @@ window.UI = (function () {
     apresChangementDePile(avant);
     refreshCommuneColors();
     refreshPileFichiers();
+    refreshTraceEtat();
+    refreshExportSelection();
   }
 
-  // Glisser-déposer : l'élément survolé se décale, et le lâcher fixe l'ordre
-  // affiché. Les flèches font le même travail sans souris — les deux passent
-  // par setOrdreFichiers, il n'y a qu'un seul ordre.
-  var pileDragId = null;
+  // La carte d'un fichier se feuillette comme les colonnes du casier : deux
+  // flèches, et le balayage sous le pouce.
+  var fichierSwipeStartX = null;
+  var fichierSwipeStartY = null;
 
   function bindPileFichiers() {
-    var liste = document.getElementById("pileFichiers");
-    if (!liste) return;
-    liste.querySelectorAll("input.pile-couleur").forEach(function (el) {
+    var carte = document.getElementById("fichierCardSwipe");
+    if (!carte) return;
+
+    carte.querySelectorAll("input.pile-couleur").forEach(function (el) {
       el.addEventListener("change", function () {
         S.setTourneeColor(el.getAttribute("data-fichier"), el.value);
-        // La carte se redessine à chaque fois qu'on y revient : elle prendra la
-        // nouvelle couleur sans qu'on ait à la forcer d'ici.
+        // La carte du parcours se redessine chaque fois qu'on y revient : elle
+        // prendra la nouvelle couleur sans qu'on la force d'ici.
         parcoursDernier = null;
       });
-      // Le sélecteur de couleur est dans une ligne déplaçable : sans cela, le
-      // début d'un glissement sur la pastille emporte la ligne au lieu d'ouvrir
-      // la palette.
-      el.addEventListener("pointerdown", function (ev) { ev.stopPropagation(); });
-      el.addEventListener("dragstart", function (ev) { ev.preventDefault(); ev.stopPropagation(); });
     });
-    liste.querySelectorAll(".pile-item").forEach(function (item) {
-      item.addEventListener("dragstart", function (ev) {
-        pileDragId = item.getAttribute("data-id");
-        item.classList.add("pile-drag");
-        try { ev.dataTransfer.effectAllowed = "move"; ev.dataTransfer.setData("text/plain", pileDragId); } catch (e) { /* ignore */ }
-      });
-      item.addEventListener("dragend", function () {
-        item.classList.remove("pile-drag");
-        pileDragId = null;
-        liste.querySelectorAll(".pile-item").forEach(function (el) { el.classList.remove("pile-cible"); });
-      });
-      item.addEventListener("dragover", function (ev) {
-        if (!pileDragId || item.getAttribute("data-id") === pileDragId) return;
-        ev.preventDefault();
-        try { ev.dataTransfer.dropEffect = "move"; } catch (e) { /* ignore */ }
-        item.classList.add("pile-cible");
-      });
-      item.addEventListener("dragleave", function () { item.classList.remove("pile-cible"); });
-      item.addEventListener("drop", function (ev) {
-        ev.preventDefault();
-        item.classList.remove("pile-cible");
-        var glisse = pileDragId;
-        var cible = item.getAttribute("data-id");
-        if (!glisse || glisse === cible) return;
-        var ordre = S.getFichiers().map(function (f) { return f.id; });
-        var depuis = ordre.indexOf(glisse);
-        if (depuis !== -1) ordre.splice(depuis, 1);
-        var vers = ordre.indexOf(cible);
-        ordre.splice(vers === -1 ? ordre.length : vers, 0, glisse);
-        S.setOrdreFichiers(ordre);
-        apresChangementDePile(etatEmpilement());
-        refreshPileFichiers();
+
+    var champId = document.getElementById("fcIdTournee");
+    if (champId) champId.addEventListener("change", function () { renommerTournee(champId); });
+
+    carte.querySelectorAll("input[data-zone]").forEach(function (el) {
+      el.addEventListener("change", function () {
+        S.setZoneIntegree(el.getAttribute("data-zone-fichier"), el.getAttribute("data-zone"), el.checked);
+        apresChangementDeZones();
       });
     });
+
+    carte.addEventListener("touchstart", function (ev) {
+      var t = ev.changedTouches[0];
+      fichierSwipeStartX = t.clientX;
+      fichierSwipeStartY = t.clientY;
+    }, { passive: true });
+    carte.addEventListener("touchend", function (ev) {
+      if (fichierSwipeStartX === null) return;
+      var t = ev.changedTouches[0];
+      var dx = t.clientX - fichierSwipeStartX;
+      var dy = t.clientY - fichierSwipeStartY;
+      fichierSwipeStartX = null;
+      if (Math.abs(dx) < 40 || Math.abs(dx) < Math.abs(dy) * 1.5) return;
+      naviguerFichier(dx < 0 ? 1 : -1);
+    }, { passive: true });
+  }
+
+  function naviguerFichier(delta) {
+    fichierIndex += delta;
+    refreshPileFichiers();
+  }
+
+  // L'identifiant de tournée appartient au fichier : le changer renomme ses
+  // adresses, sa place dans la pile et sa couleur d'un seul geste. Les zones
+  // écartées et la préparation déjà faite le suivent aussi — sans quoi renommer
+  // reviendrait à repartir de zéro.
+  function renommerTournee(champ) {
+    var ancien = champ.getAttribute("data-ancien");
+    var nouveau = (champ.value || "").trim();
+    if (!nouveau || nouveau === ancien) { champ.value = ancien; return; }
+    var res = S.renommerFichier(ancien, nouveau);
+    if (!res.ok) {
+      champ.value = ancien;
+      showAdminStatus("err", res.message);
+      return;
+    }
+    Prep.renommerTournee(S.getIdTournee(), ancien, nouveau);
+    showAdminStatus("ok", "Tournée « " + ancien + " » renommée en « " + nouveau + " ».");
+    refreshHeader();
+    apresChangementDeZones();
+    refreshPileFichiers();
+  }
+
+  // Une case entre ou sort de la tournée : l'ordre, le casier, la préparation et
+  // la trace en dépendent tous. On les rafraîchit ensemble.
+  function apresChangementDeZones() {
+    casierIndex = 0;
+    prepZoneIndex = 0;
+    tourneeIndex = 0;
+    parcoursDernier = null;
+    Parcours.viderCacheRoute();
+    refreshTraceEtat();
+    renderSearch();
+    renderPrep();
+    renderSuivi();
+  }
+
+  function basculerZonesColonne(id, col, toutesCochees) {
+    S.colonnesDuFichier(id).forEach(function (c) {
+      if (c.c !== Number(col)) return;
+      c.zones.forEach(function (z) { S.setZoneIntegree(id, z.cle, !toutesCochees); });
+    });
+    apresChangementDeZones();
+    refreshFichierZones();
+  }
+
+  function basculerToutesZones(id, toutesCochees) {
+    S.zonesDuFichier(id).forEach(function (z) { S.setZoneIntegree(id, z.cle, !toutesCochees); });
+    apresChangementDeZones();
+    refreshFichierZones();
   }
 
   function bindCommuneColorEvents() {
@@ -2710,6 +3026,22 @@ window.UI = (function () {
       case "admin-construire-trace":
         construireTraceDepuisAdmin();
         break;
+      case "fichier-prec":
+        naviguerFichier(-1);
+        break;
+      case "fichier-suiv":
+        naviguerFichier(1);
+        break;
+      case "fichier-zones-colonne":
+        basculerZonesColonne(actionEl.getAttribute("data-id"),
+          actionEl.getAttribute("data-col"), actionEl.getAttribute("data-etat") === "1");
+        break;
+      case "export-toutes":
+        basculerToutExport(actionEl.getAttribute("data-etat") === "1");
+        break;
+      case "fichier-zones-toutes":
+        basculerToutesZones(actionEl.getAttribute("data-id"), actionEl.getAttribute("data-etat") === "1");
+        break;
       case "fichier-monter":
         deplacerFichierDansLaPile(actionEl.getAttribute("data-id"), -1);
         break;
@@ -2722,13 +3054,15 @@ window.UI = (function () {
       case "admin-sample":
         if (S.getRows().length && !confirmAction("Remplacer les données actuelles par l'exemple ?")) return;
         var avantExemple = etatEmpilement();
-        var res = S.importFromCSV(SAMPLE_CSV);
+        var res = S.importFromCSV(SAMPLE_CSV, { nomFichier: "exemple.csv" });
         showAdminStatus("ok", "Exemple chargé (" + res.count + " lignes).");
         casierIndex = 0;
         prepZoneIndex = 0;
         suivreEmpilementDansLaPreparation(avantExemple);
         refreshCommuneColors();
         refreshPileFichiers();
+        refreshTraceEtat();
+        refreshExportSelection();
         renderSearch();
         renderPrep();
         break;
@@ -2742,6 +3076,8 @@ window.UI = (function () {
         suivreEmpilementDansLaPreparation(avantVidage);
         refreshCommuneColors();
         refreshPileFichiers();
+        refreshTraceEtat();
+        refreshExportSelection();
         renderSearch();
         renderPrep();
         break;
@@ -2753,6 +3089,11 @@ window.UI = (function () {
         break;
       case "add-new-address":
         var blank = S.blankRow();
+        // Sous empilement, la nouvelle adresse naît dans la tournée que
+        // l'utilisateur prépare — jamais dans celle que l'application avait en
+        // tête. Le champ Tournée de la fiche reste là pour la déplacer.
+        var tourneeNeuve = prepFichierCourant();
+        if (tourneeNeuve) blank.id_tournee = tourneeNeuve;
         S.addRow(blank);
         openFiche(blank.id);
         enterEdit();
@@ -2907,9 +3248,21 @@ window.UI = (function () {
   }
 
   function exportCSV() {
-    telecharger(S.exportCSVText(), "text/csv",
-      S.getIdTournee() + "_tournee_" + S.todayISO() + ".csv");
-    showAdminStatus("ok", "Export généré (" + S.getRows().length + " lignes).");
+    var choisis = fichiersExportes();
+    if (choisis && choisis.length === 0 && S.getSettings().multiTournees === true &&
+        S.getFichiers().length > 1) {
+      showAdminStatus("err", "Aucune tournée cochée : rien à exporter.");
+      return;
+    }
+    var texte = S.exportCSVText(choisis);
+    // Le compte annoncé est celui du fichier produit, pas celui de la base :
+    // exporter une tournée sur trois et lire le total de la base ferait douter
+    // de ce qu'on vient de télécharger.
+    var lignes = Math.max(0, texte.split("\n").filter(Boolean).length - 1);
+    var nom = (choisis && choisis.length === 1 ? choisis[0] : S.getIdTournee());
+    telecharger(texte, "text/csv", nom + "_tournee_" + S.todayISO() + ".csv");
+    showAdminStatus("ok", "Export généré (" + lignes + " ligne(s)" +
+      (choisis && choisis.length ? " · " + choisis.join(", ") : "") + ").");
   }
 
   function exportGeoJSONAdmin() {
@@ -3012,7 +3365,9 @@ window.UI = (function () {
     document.addEventListener("visibilitychange", function () { majSuiviWatch(); });
 
     var adminObserver = new MutationObserver(function () {
-      if (els.adminOverlay.classList.contains("open") && document.getElementById("admIdTournee")) {
+      // admGeocodage est présent dans les deux dispositions du panneau, avec ou
+      // sans empilement : c'est lui qui dit que le corps vient d'être rendu.
+      if (els.adminOverlay.classList.contains("open") && document.getElementById("admGeocodage")) {
         bindAdminEvents();
       }
     });

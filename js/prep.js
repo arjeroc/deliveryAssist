@@ -178,6 +178,17 @@ window.Prep = (function () {
     return Object.keys(getZonesStandard(idTournee)).length;
   }
 
+  // Renommer un fichier renomme ses cases : « C1L1@tm0 » devient « C1L1@tm1 ».
+  // La préparation déjà faite le suit, sinon changer un identifiant reviendrait
+  // à tout recommencer.
+  function renommerTournee(idTournee, ancien, nouveau) {
+    remapZonesStandard(idTournee, function (cle) {
+      var i = cle.indexOf("@");
+      if (i === -1) return cle;
+      return cle.slice(i + 1) === ancien ? cle.slice(0, i) + "@" + nouveau : cle;
+    });
+  }
+
   // Une case se nomme par sa position tant qu'un seul fichier est chargé, et par
   // sa position et son fichier dès qu'ils sont plusieurs. Les zones déjà
   // retenues sont renommées avec elle : passer d'un fichier à deux — ou
@@ -376,6 +387,7 @@ window.Prep = (function () {
     restoreStandard: restoreStandard,
     getZonesStandard: getZonesStandard,
     remapZonesStandard: remapZonesStandard,
+    renommerTournee: renommerTournee,
     isZoneStandard: isZoneStandard,
     setZoneStandard: setZoneStandard,
     toggleZoneStandard: toggleZoneStandard,

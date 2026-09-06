@@ -114,9 +114,99 @@ console.log("\n=== 3. Même adresse dans deux fichiers : jamais fusionnée ===")
   const ids = S.getRows().map((r) => r.id);
   verifie("identifiants uniques", new Set(ids).size, 2);
   verifie("deux étapes de casier", S.etapesCasier().length, 2);
+  // Les colonnes appartiennent à leur fichier : le C1 de tm0 et le C1 de tm1
+  // sont deux colonnes de deux casiers, jamais une seule.
   const cols = S.casierColonnes();
-  verifie("deux lignes de casier sur C1", cols[0].lignes.map((li) => li.cle), ["C1L1@tm0", "C1L1@tm1"]);
-  verifie("chaque ligne porte son fichier", cols[0].lignes.map((li) => li.fichier), ["tm0", "tm1"]);
+  verifie("deux colonnes C1, une par fichier", cols.map((c) => c.cle), ["tm0@1", "tm1@1"]);
+  verifie("chacune sa ligne", cols.map((c) => c.lignes.map((li) => li.cle).join("+")),
+    ["C1L1@tm0", "C1L1@tm1"]);
+  verifie("chaque ligne porte son fichier", cols.map((c) => c.lignes[0].fichier), ["tm0", "tm1"]);
+  verifie("restreint à un fichier", S.casierColonnes("tm1").map((c) => c.cle), ["tm1@1"]);
+}
+
+// --------------------------------------------------------------------------
+console.log("\n=== 3b. Une colonne n'en efface jamais une autre ===");
+{
+  const S = chargerStore();
+  S.load();
+  S.setSetting("multiTournees", true);
+  // tm1 : C1 C2 C3   —   tm0 : C1 C2 C4
+  S.importFromCSV(csv([
+    ligne("m1", "tm1", "A", "RUE A", 1, 1, 1, 1),
+    ligne("m2", "tm1", "B", "RUE B", 2, 1, 2, 1),
+    ligne("m3", "tm1", "C", "RUE C", 3, 1, 3, 1),
+  ]), { mode: "remplacer" });
+  S.importFromCSV(csv([
+    ligne("m4", "tm0", "D", "RUE D", 1, 1, 1, 1),
+    ligne("m5", "tm0", "E", "RUE E", 2, 1, 2, 1),
+    ligne("m6", "tm0", "F", "RUE F", 4, 1, 4, 1),
+  ]), { mode: "ajouter" });
+  S.setOrdreFichiers(["tm1", "tm0"]);
+
+  verifie("six colonnes, aucune avalée",
+    S.casierColonnes().map((c) => (c.fichier || "-") + "/C" + c.c),
+    ["tm1/C1", "tm1/C2", "tm1/C3", "tm0/C1", "tm0/C2", "tm0/C4"]);
+  verifie("le C1 de tm0 garde son adresse",
+    S.casierColonnes("tm0").filter((c) => c.c === 1)[0].lignes[0].rows.map((r) => r.id), ["m4"]);
+  verifie("le C1 de tm1 garde la sienne",
+    S.casierColonnes("tm1").filter((c) => c.c === 1)[0].lignes[0].rows.map((r) => r.id), ["m1"]);
+  verifie("chaque tournée navigue dans ses colonnes à elle",
+    [S.casierColonnes("tm1").length, S.casierColonnes("tm0").length], [3, 3]);
+}
+
+// --------------------------------------------------------------------------
+console.log("\n=== 3c. Zones écartées, renommage, export choisi ===");
+{
+  const S = chargerStore();
+  S.load();
+  S.setSetting("multiTournees", true);
+  S.importFromCSV(csv([
+    ligne("z1", "tm0", "A", "RUE A", 1, 1, 1, 1),
+    ligne("z2", "tm0", "B", "RUE B", 1, 2, 2, 1),
+  ]), { mode: "remplacer" });
+  S.importFromCSV(csv([
+    ligne("z3", "tm1", "C", "RUE C", 1, 1, 1, 1),
+  ]), { mode: "ajouter" });
+
+  verifie("toutes les cases entrent d'office",
+    S.zonesDuFichier("tm0").map((z) => z.cle + ":" + z.integree), ["C1L1:true", "C1L2:true"]);
+
+  S.setZoneIntegree("tm0", "C1L2", false);
+  verifie("la case écartée sort de la tournée",
+    S.rowsOrdreTournee().map((r) => r.id), ["z1", "z3"]);
+  verifie("mais reste dans la base", S.getRows().length, 3);
+  verifie("le sélecteur la montre décochée",
+    S.zonesDuFichier("tm0").map((z) => z.cle + ":" + z.integree), ["C1L1:true", "C1L2:false"]);
+  verifie("une case écartée n'est pas une colonne de la tournée",
+    S.casierColonnes("tm0").map((c) => c.lignes.length), [1]);
+
+  // Renommage : les adresses, la pile, la couleur et les zones suivent.
+  const autoTm1 = S.getTourneeColor("tm1");
+  S.setTourneeColor("tm0", "#123456");
+  const res = S.renommerFichier("tm0", "tmX");
+  verifie("renommage accepté", res.ok, true);
+  verifie("les adresses portent le nouvel identifiant",
+    S.getRows().filter((r) => r.id_tournee === "tmX").length, 2);
+  verifie("la pile aussi", S.getFichiers().map((f) => f.id), ["tmX", "tm1"]);
+  verifie("la couleur suit", S.getTourneeColor("tmX"), "#123456");
+  verifie("celle du voisin ne bouge pas", S.getTourneeColor("tm1"), autoTm1);
+  verifie("les zones écartées suivent",
+    S.zonesDuFichier("tmX").map((z) => z.cle + ":" + z.integree), ["C1L1:true", "C1L2:false"]);
+  verifie("un identifiant déjà pris est refusé", S.renommerFichier("tmX", "tm1").ok, false);
+
+
+  // Export : strictement les tournées demandées.
+  const toutes = S.exportCSVText().split("\n").filter(Boolean).length - 1;
+  const uneSeule = S.exportCSVText(["tm1"]).split("\n").filter(Boolean).length - 1;
+  verifie("tout sans sélection", toutes, 3);
+  verifie("la sélection est respectée", uneSeule, 1);
+  verifie("l'export garde les adresses écartées de la tournée",
+    S.exportCSVText(["tmX"]).split("\n").filter(Boolean).length - 1, 2);
+  // Une couleur seulement automatique appartient déjà au fichier aux yeux de
+  // l'utilisateur : renommer ne doit pas la lui changer sous les yeux.
+  const autoAvant = S.getTourneeColor("tm1");
+  S.renommerFichier("tm1", "tmZ");
+  verifie("une couleur d'office survit au renommage", S.getTourneeColor("tmZ"), autoAvant);
 }
 
 // --------------------------------------------------------------------------

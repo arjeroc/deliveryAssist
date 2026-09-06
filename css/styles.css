@@ -610,30 +610,45 @@ details.advanced summary{font-size:12.5px;color:var(--accent);cursor:pointer;fon
   font-size:11.5px;font-weight:700;display:flex;align-items:center;justify-content:center;
 }
 
-/* Empilement des fichiers de tournée : l'ordre de haut en bas est l'ordre de
-   passage, la poignée dit que la ligne se déplace, et les deux flèches font le
-   même travail pour un pouce qui ne glisse pas. */
-.pile-fichiers{list-style:none;margin:0 0 10px;padding:0;display:flex;flex-direction:column;gap:6px;}
-.pile-item{
-  display:flex;align-items:center;gap:8px;
-  padding:9px 10px;border:1px solid var(--line);border-radius:10px;background:#fff;
+/* Carte d'un fichier de tournée : son nom, son identifiant modifiable, sa
+   couleur de trace, sa place dans la pile et les cases qu'il verse à la
+   tournée. Une carte par fichier, qu'on feuillette comme les colonnes du
+   casier. */
+.fichier-card{
+  background:#fff;border:1px solid var(--line);border-radius:12px;padding:12px;margin-bottom:10px;
 }
-.pile-item.pile-drag{opacity:.4;}
-.pile-item.pile-cible{border-color:var(--accent);box-shadow:0 0 0 2px rgba(47,107,79,.15);}
-.pile-poignee{flex:0 0 auto;color:var(--muted);font-size:15px;cursor:grab;line-height:1;}
-.pile-rang{
-  flex:0 0 auto;width:20px;height:20px;border-radius:50%;background:var(--accent);color:var(--accent-ink);
-  font-size:11.5px;font-weight:700;display:flex;align-items:center;justify-content:center;
+.fc-entete{display:flex;align-items:flex-start;gap:8px;margin-bottom:10px;}
+.fc-titre{flex:1;min-width:0;}
+.fc-fichier{font-size:14px;font-weight:700;word-break:break-word;}
+.fc-rang{font-size:11.5px;color:var(--muted);margin-top:2px;}
+.fichier-card .field.fc-id{margin-bottom:8px;}
+.fichier-card details.fc-zones{margin-top:4px;}
+
+/* Cases du fichier : une colonne par bloc, ses lignes en pastilles à cocher. */
+.fz-entete{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:6px 0 8px;}
+.fz-compte{font-size:12px;color:var(--muted);}
+.pile-btn.fz-tout{width:auto;padding:0 10px;font-size:11.5px;}
+.fz-colonne{display:flex;align-items:flex-start;gap:8px;margin-bottom:8px;}
+.fz-col-btn{
+  flex:0 0 auto;width:34px;height:30px;border:1px solid var(--line);border-radius:8px;background:var(--chip);
+  font-size:12px;font-weight:800;color:var(--accent);cursor:pointer;padding:0;
 }
-/* La pile vit dans un .field, dont la règle générale étire tout input sur la
-   largeur : la pastille doit reprendre la main sur elle. */
-.pile-item input.pile-couleur{
-  flex:0 0 auto;width:30px;height:26px;padding:0;border:1px solid var(--line);border-radius:6px;
+.fz-cases{flex:1;display:flex;flex-wrap:wrap;gap:6px;}
+.fz-case{
+  display:inline-flex;align-items:center;gap:5px;cursor:pointer;
+  border:1px solid var(--line);border-radius:8px;padding:5px 8px;background:#fff;font-size:12px;
+}
+.fz-case.on{border-color:var(--accent);background:#e9f4ee;color:var(--accent);font-weight:700;}
+.fichier-card .fz-case input[type=checkbox]{width:auto;margin:0;}
+.fz-case small{color:var(--muted);font-weight:400;}
+.fz-case.on small{color:var(--accent);opacity:.75;}
+
+/* La carte vit dans un .field, dont la règle générale étire tout input sur la
+   largeur : la pastille de couleur doit reprendre la main sur elle. */
+.fichier-card input.pile-couleur{
+  flex:0 0 auto;width:30px;height:30px;padding:0;border:1px solid var(--line);border-radius:6px;
   background:#fff;cursor:pointer;
 }
-.pile-corps{flex:1;min-width:0;}
-.pile-nom{display:block;font-size:14px;font-weight:700;}
-.pile-meta{display:block;font-size:11.5px;color:var(--muted);margin-top:1px;}
 .pile-actions{flex:0 0 auto;display:flex;gap:4px;}
 .pile-btn{
   width:30px;height:30px;border:1px solid var(--line);background:#fff;border-radius:8px;
@@ -642,6 +657,38 @@ details.advanced summary{font-size:12.5px;color:var(--accent);cursor:pointer;fon
 .pile-btn:disabled{opacity:.35;cursor:default;}
 .pile-btn.retirer{color:var(--err);}
 .pile-ajout{display:block;font-size:12px;color:var(--muted);margin-bottom:3px;}
+
+/* État de la trace : une ligne, pas une étape. Elle se construit au chargement,
+   il n'y a rien à valider — sauf quand des adresses n'ont pas de position, et
+   c'est alors la seule chose qu'elle dit. */
+.trace-etat{
+  display:flex;align-items:center;gap:8px;margin-top:12px;
+  padding:9px 10px;border:1px solid var(--line);border-radius:10px;background:#fff;
+}
+.trace-etat.manque{border-color:#f0dcb4;background:var(--warn-bg);}
+.trace-etat-pastille{flex:0 0 auto;font-size:14px;line-height:1;}
+.trace-etat-txt{flex:1;min-width:0;font-size:12px;color:var(--muted);}
+.trace-etat.manque .trace-etat-txt{color:var(--warn);}
+.trace-etat-btn{flex:0 0 auto;font-size:15px;}
+
+/* Sélection des tournées à exporter. */
+.export-ligne{
+  display:flex;align-items:center;gap:8px;padding:7px 0;font-size:13px;cursor:pointer;
+}
+#exportSelection input[type=checkbox]{width:auto;margin:0;flex:0 0 auto;}
+.export-pastille{flex:0 0 auto;width:12px;height:12px;border-radius:3px;}
+.export-nom{font-weight:700;}
+.export-meta{color:var(--muted);font-size:11.5px;}
+
+/* Sélecteur de tournée en Préparation : il commande la navigation dans les
+   colonnes juste en dessous, il se pose donc au-dessus d'elle. */
+.prep-tournee{display:flex;align-items:center;gap:8px;margin-bottom:10px;}
+.prep-tournee label{flex:0 0 auto;font-size:12px;color:var(--muted);}
+.prep-tournee select{
+  flex:1;min-width:0;padding:8px 10px;border:1px solid var(--line);border-radius:8px;
+  background:#fff;font-size:13.5px;font-weight:700;color:var(--ink);
+}
+.prep-tournee-pastille{flex:0 0 auto;width:14px;height:14px;border-radius:4px;}
 
 /* Étiquette du fichier d'origine sur une ligne de casier : elle ne prend la
    place de rien, elle dit seulement lequel des deux paquets on regarde. */
