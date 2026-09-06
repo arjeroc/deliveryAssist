@@ -514,6 +514,10 @@ window.UI = (function () {
   }
 
   function renderSearch() {
+    // L'identifiant affiché dans l'en-tête est déduit des données chargées : il
+    // se rafraîchit donc avec la liste, et non depuis un champ de saisie qui
+    // n'existe plus. Un import qui change de tournée change l'en-tête avec lui.
+    refreshHeader();
     var q = els.searchBox.value;
     var results = S.search(q);
     els.resultCount.textContent = results.length + " résultat(s) sur " + S.getRows().length;
@@ -2428,9 +2432,12 @@ window.UI = (function () {
               ' aria-label="Retirer ' + id + '">✕</button>' +
           '</div>' +
         '</div>' +
-        '<div class="field fc-id">' +
-          '<label for="fcIdTournee">Identifiant de tournée</label>' +
-          '<input type="text" id="fcIdTournee" value="' + id + '" data-ancien="' + id + '" autocomplete="off">' +
+        // L'identifiant vient de la colonne id_tournee du fichier : il se lit,
+        // il ne se saisit pas. Le corriger ici reviendrait à faire diverger
+        // l'application de son fichier source.
+        '<div class="fc-id">' +
+          '<span class="fc-id-label">Tournée</span>' +
+          '<span class="fc-id-valeur">' + id + '</span>' +
         '</div>' +
         '<details class="advanced fc-zones"' + (fichierZonesDepliees ? " open" : "") + ' id="fcZones">' +
           '<summary>Zones de casier intégrées</summary>' +
@@ -2602,8 +2609,11 @@ window.UI = (function () {
         // il appartient au fichier et se règle sur sa carte.
         (multi ? "" :
           '<div class="field admin-step">' +
-            '<label class="admin-step-title" for="admIdTournee"><span class="admin-step-num">1</span>Identifiant de tournée</label>' +
-            '<input type="text" id="admIdTournee" value="' + escapeHtml(S.getIdTournee()) + '">' +
+            '<div class="admin-step-title"><span class="admin-step-num">1</span>Identifiant de tournée</div>' +
+            '<div class="fc-id">' +
+              '<span class="fc-id-valeur">' + escapeHtml(S.getIdTournee()) + '</span>' +
+              '<span class="fc-id-source">lu dans la colonne <code>id_tournee</code> du fichier</span>' +
+            '</div>' +
           '</div>') +
         etapeFichiersHTML(multi) +
         traceEtatHTML() +
@@ -2685,18 +2695,6 @@ window.UI = (function () {
 'tm002-0020,tm002,BERGER,6,RUE DU MONTET,16260,CHASSENEUIL-SUR-BONNIEURE,CHEZ GIRAUDEAU,45.825941,0.441750,geocode,,,,,,,30,2,,lettre,,false,2026-09-04\n';
 
   function bindAdminEvents() {
-    // Sous empilement, l'identifiant appartient à chaque fichier : ce champ
-    // global n'est pas rendu, et rien n'est à lier.
-    var champIdGlobal = document.getElementById("admIdTournee");
-    if (champIdGlobal) champIdGlobal.addEventListener("change", function (e) {
-      S.setIdTournee(e.target.value.trim());
-      refreshHeader();
-      renderPrep();
-      suiviCentered = false;
-      suiviCarteCadree = false;
-      tourneeIndex = 0;
-      renderSuivi();
-    });
     document.getElementById("admFileInput").addEventListener("change", function (ev) {
       var file = ev.target.files[0];
       if (!file) return;
@@ -2860,9 +2858,6 @@ window.UI = (function () {
       });
     });
 
-    var champId = document.getElementById("fcIdTournee");
-    if (champId) champId.addEventListener("change", function () { renommerTournee(champId); });
-
     carte.querySelectorAll("input[data-zone]").forEach(function (el) {
       el.addEventListener("change", function () {
         S.setZoneIntegree(el.getAttribute("data-zone-fichier"), el.getAttribute("data-zone"), el.checked);
@@ -2888,27 +2883,6 @@ window.UI = (function () {
 
   function naviguerFichier(delta) {
     fichierIndex += delta;
-    refreshPileFichiers();
-  }
-
-  // L'identifiant de tournée appartient au fichier : le changer renomme ses
-  // adresses, sa place dans la pile et sa couleur d'un seul geste. Les zones
-  // écartées et la préparation déjà faite le suivent aussi — sans quoi renommer
-  // reviendrait à repartir de zéro.
-  function renommerTournee(champ) {
-    var ancien = champ.getAttribute("data-ancien");
-    var nouveau = (champ.value || "").trim();
-    if (!nouveau || nouveau === ancien) { champ.value = ancien; return; }
-    var res = S.renommerFichier(ancien, nouveau);
-    if (!res.ok) {
-      champ.value = ancien;
-      showAdminStatus("err", res.message);
-      return;
-    }
-    Prep.renommerTournee(S.getIdTournee(), ancien, nouveau);
-    showAdminStatus("ok", "Tournée « " + ancien + " » renommée en « " + nouveau + " ».");
-    refreshHeader();
-    apresChangementDeZones();
     refreshPileFichiers();
   }
 

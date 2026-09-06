@@ -155,7 +155,7 @@ console.log("\n=== 3b. Une colonne n'en efface jamais une autre ===");
 }
 
 // --------------------------------------------------------------------------
-console.log("\n=== 3c. Zones écartées, renommage, export choisi ===");
+console.log("\n=== 3c. Zones écartées, identifiant lu, export choisi ===");
 {
   const S = chargerStore();
   S.load();
@@ -180,20 +180,14 @@ console.log("\n=== 3c. Zones écartées, renommage, export choisi ===");
   verifie("une case écartée n'est pas une colonne de la tournée",
     S.casierColonnes("tm0").map((c) => c.lignes.length), [1]);
 
-  // Renommage : les adresses, la pile, la couleur et les zones suivent.
-  const autoTm1 = S.getTourneeColor("tm1");
-  S.setTourneeColor("tm0", "#123456");
-  const res = S.renommerFichier("tm0", "tmX");
-  verifie("renommage accepté", res.ok, true);
-  verifie("les adresses portent le nouvel identifiant",
-    S.getRows().filter((r) => r.id_tournee === "tmX").length, 2);
-  verifie("la pile aussi", S.getFichiers().map((f) => f.id), ["tmX", "tm1"]);
-  verifie("la couleur suit", S.getTourneeColor("tmX"), "#123456");
-  verifie("celle du voisin ne bouge pas", S.getTourneeColor("tm1"), autoTm1);
-  verifie("les zones écartées suivent",
-    S.zonesDuFichier("tmX").map((z) => z.cle + ":" + z.integree), ["C1L1:true", "C1L2:false"]);
-  verifie("un identifiant déjà pris est refusé", S.renommerFichier("tmX", "tm1").ok, false);
-
+  // L'identifiant de tournée vient de la colonne id_tournee : il ne se saisit
+  // nulle part, et la tournée courante est celle du premier fichier de la pile.
+  verifie("identifiant courant = tête de pile", S.getIdTournee(), "tm0");
+  S.setOrdreFichiers(["tm1", "tm0"]);
+  verifie("il suit la tête de pile", S.getIdTournee(), "tm1");
+  S.setOrdreFichiers(["tm0", "tm1"]);
+  verifie("aucune API de renommage n'est exposée", typeof S.renommerFichier, "undefined");
+  verifie("aucune saisie d'identifiant non plus", typeof S.setIdTournee, "undefined");
 
   // Export : strictement les tournées demandées.
   const toutes = S.exportCSVText().split("\n").filter(Boolean).length - 1;
@@ -201,12 +195,39 @@ console.log("\n=== 3c. Zones écartées, renommage, export choisi ===");
   verifie("tout sans sélection", toutes, 3);
   verifie("la sélection est respectée", uneSeule, 1);
   verifie("l'export garde les adresses écartées de la tournée",
-    S.exportCSVText(["tmX"]).split("\n").filter(Boolean).length - 1, 2);
-  // Une couleur seulement automatique appartient déjà au fichier aux yeux de
-  // l'utilisateur : renommer ne doit pas la lui changer sous les yeux.
-  const autoAvant = S.getTourneeColor("tm1");
-  S.renommerFichier("tm1", "tmZ");
-  verifie("une couleur d'office survit au renommage", S.getTourneeColor("tmZ"), autoAvant);
+    S.exportCSVText(["tm0"]).split("\n").filter(Boolean).length - 1, 2);
+}
+
+// --------------------------------------------------------------------------
+console.log("\n=== 3d. L'identifiant de tournée se lit dans le fichier ===");
+{
+  const S = chargerStore();
+  S.load();
+  // Un fichier qui se déclare tm042 impose son identifiant : rien ne le saisit.
+  S.importFromCSV(csv([ligne("k1", "tm042", "A", "RUE A", 1, 1, 1, 1)]));
+  verifie("l'identifiant vient des données", S.getIdTournee(), "tm042");
+  verifie("la pile aussi", S.getFichiers().map((f) => f.id), ["tm042"]);
+
+  // Un fichier muet reçoit celui du nom de fichier, jamais une valeur inventée.
+  const S2 = chargerStore();
+  S2.load();
+  const sansId = csv([ligne("k2", "", "B", "RUE B", 1, 1, 1, 1)]);
+  S2.importFromCSV(sansId, { nomFichier: "Tournee_C.csv" });
+  verifie("à défaut, le nom du fichier", S2.getIdTournee(), "Tournee_C");
+  verifie("les adresses le portent",
+    S2.getRows().map((r) => r.id_tournee), ["Tournee_C"]);
+
+  // Une adresse créée dans l'application prend l'identifiant courant, et le
+  // garde à l'enregistrement même si l'utilisateur en choisit un autre.
+  const neuve = S.blankRow();
+  verifie("une adresse neuve naît dans la tournée courante", neuve.id_tournee, "tm042");
+  S.addRow(neuve);
+  S.importFromCSV(csv([ligne("k3", "tm043", "C", "RUE C", 1, 1, 1, 1)]), { mode: "ajouter" });
+  S.updateRow(neuve.id, { id_tournee: "tm043" });
+  verifie("le choix de l'utilisateur est respecté à l'enregistrement",
+    S.findRow(neuve.id).id_tournee, "tm043");
+  verifie("et la pile le compte au bon endroit",
+    S.getFichiers().map((f) => f.id + ":" + f.count), ["tm042:1", "tm043:2"]);
 }
 
 // --------------------------------------------------------------------------

@@ -316,6 +316,12 @@ window.Store = (function () {
     });
     suite.forEach(function (f) { f.count = comptes[f.id] || 0; });
     state.fichiers = suite;
+
+    // L'identifiant de la tournée courante est celui du premier fichier de la
+    // pile. Il n'est jamais saisi : il vient de la colonne id_tournee du
+    // fichier de données, et suit donc ce qui est chargé. Base vidée, on garde
+    // le dernier connu plutôt que de faire clignoter l'en-tête sur un défaut.
+    if (state.fichiers.length) state.idTournee = state.fichiers[0].id;
   }
 
   function getFichiers() {
@@ -432,35 +438,6 @@ window.Store = (function () {
     return ordre.sort(function (a, b) { return a - b; }).map(function (c) { return cols[c]; });
   }
 
-  // Renomme la tournée d'un fichier : ses adresses la portent toutes, la pile
-  // en garde la trace, et sa couleur le suit. Sans ce dernier point, changer
-  // l'identifiant ferait changer la trace de couleur sans qu'on l'ait demandé.
-  function renommerFichier(ancien, nouveau) {
-    nouveau = String(nouveau || "").trim();
-    if (!nouveau || nouveau === ancien) return { ok: false, message: "Identifiant inchangé." };
-    if (indexFichier(nouveau) !== -1) {
-      return { ok: false, message: "L'identifiant « " + nouveau + " » est déjà pris par un autre fichier." };
-    }
-    var f = fichierEntree(ancien);
-    if (!f) return { ok: false, message: "Fichier introuvable." };
-
-    // La couleur affichée est figée avant le renommage, même quand elle venait
-    // de la palette : elle appartenait à ce fichier aux yeux de l'utilisateur,
-    // et changer d'identifiant ne doit pas faire changer sa trace de couleur.
-    var couleur = getTourneeColor(ancien);
-
-    state.rows.forEach(function (r) {
-      if ((r.id_tournee || "") === ancien) r.id_tournee = nouveau;
-    });
-    f.id = nouveau;
-    delete state.settings.tourneeColors[ancien];
-    state.settings.tourneeColors[nouveau] = couleur;
-    // L'identifiant global suit le premier fichier tant qu'il n'y en a qu'un :
-    // l'en-tête de l'application ne doit pas annoncer une tournée disparue.
-    if (state.idTournee === ancien && state.fichiers.length <= 1) state.idTournee = nouveau;
-    persist();
-    return { ok: true, ancien: ancien, nouveau: nouveau };
-  }
 
   // "LIMOGES (Le Mas de…)" — le lieu-dit reste secondaire, entre parenthèses,
   // pour situer sans prendre le pas sur la commune.
@@ -1399,7 +1376,6 @@ window.Store = (function () {
     getRows: function () { return state.rows; },
     setRows: function (r) { state.rows = r; persist(); },
     getIdTournee: function () { return state.idTournee; },
-    setIdTournee: function (v) { state.idTournee = v || "tm002"; persist(); },
     getSettings: function () { return state.settings; },
     setSetting: function (k, v) { state.settings[k] = v; persist(); },
 
@@ -1431,7 +1407,6 @@ window.Store = (function () {
     setOrdreFichiers: setOrdreFichiers,
     deplacerFichier: deplacerFichier,
     retirerFichier: retirerFichier,
-    renommerFichier: renommerFichier,
     zoneIntegree: zoneIntegree,
     setZoneIntegree: setZoneIntegree,
     zonesDuFichier: zonesDuFichier,
