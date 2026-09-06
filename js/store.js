@@ -1168,15 +1168,28 @@ window.Store = (function () {
   var FIELD_WEIGHTS = { noms: 3, numero: 2.5, rue: 2, lieuDit: 1.4, commune: 1.2, codePostal: 1 };
 
   var searchIndex = null; // reconstruit paresseusement après toute modification
+  // Combien d'adresses de la base portent chaque mot de nom. Un patronyme
+  // unique dans la tournée est une signature ; « DUPONT » chez six foyers n'en
+  // est pas une. Cette table sert au scan, quand une étiquette mal lue ne rend
+  // qu'un seul mot exploitable.
+  var freqNoms = {};
 
   function invalidateIndex() { searchIndex = null; }
 
   function buildIndex() {
+    freqNoms = {};
     searchIndex = state.rows.map(function (r) {
+      var noms = contentTokens(tokenize(namesOf(r).join(" ")));
+      var vus = {};
+      noms.forEach(function (t) {
+        if (vus[t]) return;           // deux fois le même nom sur une adresse
+        vus[t] = 1;                   // ne fait qu'une adresse
+        freqNoms[t] = (freqNoms[t] || 0) + 1;
+      });
       return {
         row: r,
         fields: {
-          noms: contentTokens(tokenize(namesOf(r).join(" "))),
+          noms: noms,
           numero: tokenize(r.numero),
           rue: contentTokens(tokenize(r.rue)),
           lieuDit: contentTokens(tokenize(r.lieu_dit)),
@@ -1271,6 +1284,29 @@ window.Store = (function () {
     });
   }
 
+  // Un nom propre rare vaut à lui seul une proposition. Une étiquette froissée,
+  // pliée sur l'adresse, ou cadrée trop haut ne laisse parfois lire que le
+  // patronyme : exiger deux mots communs revient alors à ne rien proposer du
+  // tout, alors que le nom, lui, ne désigne qu'une adresse de la tournée.
+  //
+  // Trois garde-fous pour que cette porte ne s'ouvre pas trop grand : le mot
+  // doit venir du champ des noms (le plus discriminant), être assez long pour
+  // ne pas ressembler à tout, et n'être porté que par une ou deux adresses.
+  var RARETE_NOM = 2;
+  var LONGUEUR_NOM_SEUL = 4;
+
+  function nomDiscriminant(tokens, entry) {
+    var noms = entry.fields.noms;
+    for (var i = 0; i < tokens.length; i++) {
+      if (tokens[i].length < LONGUEUR_NOM_SEUL) continue;
+      for (var j = 0; j < noms.length; j++) {
+        if ((freqNoms[noms[j]] || 0) <= RARETE_NOM &&
+            tokenMatchScore(tokens[i], noms[j]) > 0) return true;
+      }
+    }
+    return false;
+  }
+
   // Note un lot de mots face à une adresse : aucun mot n'est obligatoire,
   // chacun ajoute des points. L'inverse de search(), donc, car un texte scanné
   // contient du bruit et souvent une seconde adresse.
@@ -1310,8 +1346,12 @@ window.Store = (function () {
     var presel = [];
     getIndex().forEach(function (entry) {
       var s = noterLot(tokensGlobaux, entry);
-      // Un seul mot commun — le code postal, le plus souvent — ne désigne personne.
-      if (s.touches >= 2) presel.push({ entry: entry, brut: s.total });
+      // Un seul mot commun — le code postal, le plus souvent — ne désigne
+      // personne. Sauf si ce mot est un nom propre rare : lui désigne.
+      var nomSeul = (s.touches === 1) && nomDiscriminant(tokensGlobaux, entry);
+      if (s.touches >= 2 || nomSeul) {
+        presel.push({ entry: entry, brut: s.total, minTouches: nomSeul ? 1 : 2 });
+      }
     });
     presel.sort(function (a, b) { return b.brut - a.brut; });
     presel = presel.slice(0, 30);
@@ -1325,9 +1365,9 @@ window.Store = (function () {
       var meilleure = { total: 0, touches: 0 };
       fenetres.forEach(function (tokens) {
         var s = noterLot(tokens, p.entry);
-        if (s.touches >= 2 && s.total > meilleure.total) meilleure = s;
+        if (s.touches >= p.minTouches && s.total > meilleure.total) meilleure = s;
       });
-      if (meilleure.touches >= 2) {
+      if (meilleure.touches >= p.minTouches) {
         out.push({ row: p.entry.row, score: meilleure.total, touches: meilleure.touches });
       }
     });

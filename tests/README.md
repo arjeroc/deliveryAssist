@@ -1,11 +1,12 @@
 # Bancs d'essai
 
-Quatre scripts Node sans dépendance : ils chargent `js/store.js` — et pour la
-trace `js/parcours.js`, avec un Leaflet en carton — dans un faux navigateur
+Cinq scripts Node sans dépendance : ils chargent `js/store.js` — et pour la
+trace `js/parcours.js`, avec un Leaflet en carton, pour le scan
+`js/scan-core.js`, qui n'a besoin de rien — dans un faux navigateur
 (`vm` + un `localStorage` en mémoire) et interrogent le modèle.
 
 ```bash
-node tests/references.js && node tests/multi-tournees.js && node tests/traces-par-tournee.js && node tests/non-regression.js
+node tests/references.js && node tests/multi-tournees.js && node tests/traces-par-tournee.js && node tests/non-regression.js && node tests/scan.js
 ```
 
 - **references.js** — toute fonction locale appelée est-elle définie dans son
@@ -26,3 +27,10 @@ node tests/references.js && node tests/multi-tournees.js && node tests/traces-pa
   entre le code d'avant l'empilement (témoin figé sur un commit) et le code
   courant, drapeau baissé. Rien ne doit bouger pour l'utilisateur qui ne charge
   qu'un fichier.
+- **scan.js** — la mécanique du scan d'étiquette, prise hors du navigateur :
+  transitions d'états permises et refusées, cadence d'OCR (jamais deux lectures
+  en vol, jamais plus vite que l'intervalle, résultat périmé par un changement
+  d'état), contrôle de netteté et de stabilité, marge de cadrage, économie des
+  rotations, cartes qui ne clignotent pas — et surtout l'attribution : rien ne
+  s'écrit dans la préparation avant « Ajouter à la tournée », « Changer
+  d'adresse » n'écrit rien, et le ✕ n'oublie rien derrière lui.

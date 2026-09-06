@@ -521,7 +521,7 @@ details.advanced summary{font-size:12.5px;color:var(--accent);cursor:pointer;fon
 .geo-score{font-weight:700;color:var(--accent);white-space:nowrap;}
 .geo-score-low{color:var(--warn);}
 
-/* --- scan d'étiquette (expérimental) --- */
+/* --- scan d'étiquette : bouton, surcouche, cartes candidates --- */
 .btn-scan{
   flex:0 0 auto;width:48px;border:1px solid var(--line);background:#fff;border-radius:10px;
   font-size:20px;line-height:1;cursor:pointer;
@@ -574,6 +574,52 @@ details.advanced summary{font-size:12.5px;color:var(--accent);cursor:pointer;fon
   background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px;
   font-size:12px;line-height:1.5;white-space:pre-wrap;overflow-x:auto;
 }
+
+/* --- scan : viseur vidéo --- */
+/* Le conteneur reçoit en JS le rapport exact de l'image, et la vidéo le
+   remplit sans recadrage (fill) : le cadre dessiné ci-dessous tombe alors au
+   pixel près sur la zone découpée pour l'OCR. */
+.scan-viseur{
+  position:relative;width:100%;aspect-ratio:4/3;background:#0d0f0d;
+  border-radius:14px;overflow:hidden;margin-bottom:12px;
+}
+.scan-viseur video{position:absolute;inset:0;width:100%;height:100%;object-fit:fill;display:block;}
+/* Mêmes fractions que CADRE dans scan.js : 86 % de large, 46 % de haut,
+   centré. La marge de sécurité de la capture déborde de ce trait, exprès. */
+.scan-cadre{
+  position:absolute;left:7%;top:27%;width:86%;height:46%;
+  border:2px solid rgba(255,255,255,.95);border-radius:10px;
+  box-shadow:0 0 0 100vmax rgba(0,0,0,.38);
+}
+.scan-hint{
+  position:absolute;left:0;right:0;bottom:10px;padding:0 12px;text-align:center;
+  color:#fff;font-size:13px;font-weight:600;text-shadow:0 1px 3px rgba(0,0,0,.65);
+}
+.scan-hint-alerte{color:#ffd9a8;}
+.scan-suggestions{min-height:64px;}
+.scan-attente{margin:0;padding:18px 8px;text-align:center;color:var(--muted);font-size:13px;}
+.scan-lien{
+  display:block;width:100%;padding:14px 8px;border:none;background:none;text-align:center;
+  color:var(--accent);font-size:14px;font-weight:700;cursor:pointer;
+}
+
+/* --- scan : attribution des objets suivis --- */
+.scan-adresse{
+  display:block;background:var(--card);border:2px solid var(--accent);
+  border-radius:12px;padding:14px;margin-bottom:10px;
+}
+.scan-adresse-nom{display:block;font-size:16px;font-weight:700;}
+.scan-adresse-ligne{display:block;font-size:13.5px;color:var(--muted);margin-top:2px;}
+.scan-deja{margin:0 2px 12px;font-size:12.5px;color:var(--muted);}
+.scan-attrib{
+  background:var(--card);border:1px solid var(--line);border-radius:12px;
+  padding:6px 14px;margin-bottom:14px;
+}
+.scan-valider{
+  display:block;width:100%;padding:16px;border:none;border-radius:12px;
+  background:var(--accent);color:#fff;font-size:16px;font-weight:700;cursor:pointer;
+}
+.scan-valider[disabled]{opacity:.45;}
 
 /* --- admin overlay --- */
 #adminOverlay{

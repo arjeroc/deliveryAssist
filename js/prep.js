@@ -28,10 +28,14 @@ window.Prep = (function () {
 
   // Catégories d'items à distribuer, source unique pour toute l'application :
   // ajouter une catégorie ici suffit à la faire apparaître partout.
+  //
+  // Deux noms pour la même chose : le court tient dans une carte de liste, le
+  // long lève l'ambiguïté là où l'écran ne dit pas déjà qu'il s'agit d'objets
+  // suivis — l'attribution après un scan, par exemple.
   var TYPES = [
-    { key: "lettres", icon: "✉️", label: "Lettres" },
-    { key: "colis", icon: "📦", label: "Colis" },
-    { key: "presse", icon: "📰", label: "Presse" }
+    { key: "lettres", icon: "✉️", label: "Lettres", labelLong: "Lettres suivies" },
+    { key: "colis", icon: "📦", label: "Colis", labelLong: "Colis" },
+    { key: "presse", icon: "📰", label: "Presse", labelLong: "Presse" }
   ];
 
   function typeKeys() { return TYPES.map(function (t) { return t.key; }); }

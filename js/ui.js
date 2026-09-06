@@ -3176,15 +3176,35 @@ window.UI = (function () {
         exporterTrace();
         break;
       case "scan-open":
-        // Le scan ne fait que désigner une adresse : il la cible dans la
-        // préparation, où les compteurs sont déjà sous le pouce.
-        Scan.open({ onPick: function (id) { pickSuggestion(id, "prep"); } });
+        // Le scan désigne une adresse et lui attribue ses objets sans quitter
+        // la surcouche : la préparation, derrière, est tenue à jour au fur et
+        // à mesure pour être prête dès la fermeture.
+        Scan.open({
+          onPick: function (id) { pickSuggestion(id, "prep"); },
+          onAjout: function () { renderPrep(); }
+        });
         break;
       case "scan-close":
         Scan.close();
         break;
       case "scan-pick":
         Scan.pick(actionEl.getAttribute("data-id"));
+        break;
+      case "scan-qty":
+        Scan.ajusterQuantite(actionEl.getAttribute("data-type"),
+          parseInt(actionEl.getAttribute("data-delta"), 10) || 0);
+        break;
+      case "scan-ajouter":
+        Scan.ajouterALaTournee();
+        break;
+      case "scan-changer":
+        Scan.changerAdresse();
+        break;
+      case "scan-photo":
+        Scan.modePhoto();
+        break;
+      case "scan-video":
+        Scan.modeVideo();
         break;
       case "field-pick":
         pickFieldValue(actionEl.getAttribute("data-kind"), actionEl.getAttribute("data-value"));
