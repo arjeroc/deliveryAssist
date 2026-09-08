@@ -620,25 +620,6 @@ details.advanced summary{font-size:12.5px;color:var(--accent);cursor:pointer;fon
     transform:translate(-50%,-50%) rotate(var(--scan-rotation, 90deg));
     transform-origin:center center;
   }
-  /* Le flux caméra brut n'a pas besoin qu'on le tourne — l'appareil s'en
-     charge déjà à sa manière, propre à chaque téléphone/navigateur — et le
-     pivot d'ensemble ci-dessus le fait tourner une seconde fois pour rien,
-     d'où un rendu caméra bizarre une fois sur le terrain.
-     .scan-camara (vidéo + cadre de visée, voir plus bas) porte donc la
-     rotation inverse (même angle, signe opposé), avec ses propres
-     dimensions échangées pour continuer à remplir .scan-viseur (60vh de
-     large, 100vw de haut : voir .scan-viseur plus bas) après ce second
-     pivot. Vidéo ET cadre y sont contre-tournés ENSEMBLE, comme un seul
-     bloc : le cadre dessine sur l'image ce qu'il désigne, et les deux
-     doivent donc toujours tourner pareil, jamais l'un sans l'autre — sans
-     quoi la fenêtre de visée cesserait de montrer la zone réellement lue,
-     et le scan ne trouverait plus rien. Hint et ✕ restent hors de
-     .scan-camara, dans le repère de l'ensemble : ce sont de simples
-     textes/boutons, sans idée propre de leur orientation. */
-  #scanOverlay.scan-plein .scan-camara{
-    top:50%;left:50%;right:auto;bottom:auto;width:100vw;height:60vh;
-    transform:translate(-50%,-50%) rotate(calc(var(--scan-rotation, 90deg) * -1));
-  }
 }
 
 .scan-intro{font-size:14px;line-height:1.5;margin:0 0 16px;}
@@ -710,17 +691,20 @@ details.advanced summary{font-size:12.5px;color:var(--accent);cursor:pointer;fon
   width:38px;height:38px;padding:0;border:none;border-radius:50%;
   background:rgba(0,0,0,.45);color:#fff;font-size:17px;line-height:1;cursor:pointer;
 }
-/* Vidéo et cadre de visée, un seul bloc : voir le commentaire du pivot
-   forcé plus haut sur pourquoi ils ne se séparent jamais. En disposition
-   normale, .scan-camara se contente de remplir .scan-viseur bord à bord —
-   aucun effet visible ; c'est seulement quand le pivot forcé la
-   contre-tourne (media query plus haut) que cette séparation sert. */
-.scan-camara{position:absolute;inset:0;overflow:hidden;}
-.scan-camara video{position:absolute;inset:0;width:100%;height:100%;object-fit:fill;display:block;}
+/* Vidéo et cadre restent de simples enfants de .scan-viseur, sans pivot
+   propre : un seul rectangle tourne pour les deux (voir le pivot forcé
+   plus haut), ils ne peuvent donc jamais se désaligner l'un de l'autre —
+   ce qui s'est produit quand la vidéo seule portait une contre-rotation. */
+.scan-viseur video{position:absolute;inset:0;width:100%;height:100%;object-fit:fill;display:block;}
 /* Mêmes fractions que CADRE dans scan.js : 90 % de large, 70 % de haut,
    centré — un rectangle large, pour une adresse lue à l'horizontale plutôt
    qu'un cadre carré qui la compresserait. La marge de sécurité de la
-   capture déborde de ce trait, exprès. */
+   capture déborde de ce trait, exprès.
+   Une fois le pivot forcé actif (voir plus haut) et le téléphone encore
+   debout, ce rectangle s'affiche donc temporairement plus haut que large
+   à l'écran — c'est la même géométrie que .scan-viseur lui-même (voir son
+   propre commentaire), pas une erreur : tourner le téléphone lui rend sa
+   vraie forme, large. */
 .scan-cadre{
   position:absolute;left:5%;top:15%;width:90%;height:70%;
   border:2px solid rgba(255,255,255,.95);border-radius:10px;

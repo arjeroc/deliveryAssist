@@ -531,15 +531,12 @@ window.Scan = (function () {
     els.body.innerHTML =
       '<div class="scan-live">' +
         '<div class="scan-viseur" id="scanViseur">' +
-          // .scan-camara tient la vidéo ET son cadre de visée ensemble : les
-          // deux doivent rester alignés — le cadre dessine sur l'image ce
-          // qu'il désigne, jamais l'un tourné sans l'autre. Vidéo et cadre
-          // se contre-tournent donc comme un seul bloc (voir CSS, pivot
-          // forcé) ; hint et ✕ restent dans le repère de l'ensemble, ce sont
-          // de simples textes/boutons, pas des pixels d'image.
-          '<div class="scan-camara" id="scanCamara">' +
-            '<div class="scan-cadre" aria-hidden="true"></div>' +
-          '</div>' +
+          // Vidéo et cadre restent de simples frères : un seul pivot pour
+          // tout .scan-viseur (voir CSS, pivot forcé), jamais deux — la
+          // contre-rotation tentée sur la vidéo seule les a désalignés une
+          // fois (le cadre ne montrait plus ce qui était lu, plus aucun
+          // résultat), pas de raison de reproduire ce risque ailleurs.
+          '<div class="scan-cadre" aria-hidden="true"></div>' +
           '<div class="scan-hint" id="scanHint"></div>' +
           // Le ✕ du bandeau, rendu à l'image : c'est le seul geste de sortie,
           // il ne doit coûter ni une ligne de hauteur ni un aller-retour.
@@ -552,8 +549,8 @@ window.Scan = (function () {
             '📷 Prendre une photo à la place</button>' +
         '</div>' +
       '</div>';
-    var camara = document.getElementById("scanCamara");
-    camara.insertBefore(assurerVideo(), camara.firstChild);
+    var cadre = document.getElementById("scanViseur");
+    cadre.insertBefore(assurerVideo(), cadre.firstChild);
     viseurMonte = true;
     ajusterViseur();
   }
