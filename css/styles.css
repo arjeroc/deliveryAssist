@@ -195,6 +195,26 @@ mark{background:#fff2a8;color:inherit;border-radius:3px;padding:0 1px;}
 .suivi-resume-n.est-ko{color:var(--err);}
 .suivi-resume-n.est-reste{color:var(--muted);}
 
+/* volet déroulant : une ligne par catégorie (lettres, presse, colis, zones
+   standard), les mêmes quatre chiffres pour toutes — total / distribué / non
+   distribué / restant — sous un petit en-tête de colonnes. */
+.suivi-cat-head{
+  display:flex;align-items:center;gap:8px;padding:2px 0 4px;
+  font-size:10px;text-transform:uppercase;letter-spacing:.03em;color:var(--muted);
+}
+.suivi-cat-row{display:flex;align-items:center;gap:8px;padding:6px 0;font-size:13.5px;border-top:1px dashed var(--line);}
+.suivi-cat-head + .suivi-cat-row{border-top:none;}
+.suivi-cat-icon{width:18px;text-align:center;font-size:14px;flex:0 0 auto;}
+.suivi-cat-label{flex:1;min-width:0;}
+.suivi-cat-fig{
+  width:34px;flex:0 0 auto;text-align:right;font-weight:800;color:var(--ink);
+  font-variant-numeric:tabular-nums;
+}
+.suivi-cat-head .suivi-cat-fig{width:34px;font-weight:700;text-align:right;}
+.suivi-cat-fig.est-ok{color:var(--accent);}
+.suivi-cat-fig.est-ko{color:var(--err);}
+.suivi-cat-fig.est-reste{color:var(--muted);}
+
 .field-inline{font-size:12.5px;color:var(--muted);margin-bottom:8px;text-align:center;}
 .field-inline button{margin-left:6px;border:1px solid var(--line);background:#fff;border-radius:6px;padding:4px 8px;font-size:12px;font-weight:700;color:var(--accent);}
 
@@ -278,6 +298,11 @@ mark{background:#fff2a8;color:inherit;border-radius:3px;padding:0 1px;}
 .std-num{
   font-size:13px;font-weight:700;line-height:1;padding:6px 9px;border-radius:8px;
   background:#fff;border:1px solid #e3d8bd;color:var(--ink);font-variant-numeric:tabular-nums;
+  /* devenu un bouton : on ne change rien à l'apparence héritée ci-dessus,
+     seulement ce que réclame un <button> pour se comporter comme le <span>
+     d'avant, plus un plancher de zone tactile qui ne se voit pas au repos. */
+  font-family:inherit;cursor:pointer;-webkit-tap-highlight-color:transparent;
+  min-width:34px;min-height:32px;display:inline-flex;align-items:center;justify-content:center;
 }
 .std-num.sans-numero{color:var(--muted);font-style:italic;}
 .std-num.is-distribue{background:#e9f4ee;border-color:#bcdcc9;color:var(--accent);text-decoration:line-through;}
@@ -310,11 +335,18 @@ mark{background:#fff2a8;color:inherit;border-radius:3px;padding:0 1px;}
 .zone-progress-text{font-size:12px;color:var(--muted);margin-top:5px;}
 
 .tournee-addr-list{border-top:1px dashed var(--line);}
-.tournee-addr-row{display:flex;align-items:center;gap:8px;padding:8px 4px;border-bottom:1px dashed var(--line);border-radius:8px;}
+/* flex-wrap : la ligne principale (nom + actions) ne bouge pas, le détail
+   déplié — flex-basis 100% — passe simplement à la ligne suivante. */
+.tournee-addr-row{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:8px 4px;border-bottom:1px dashed var(--line);border-radius:8px;}
 .tournee-addr-row:last-child{border-bottom:none;}
-.tournee-addr-main{flex:1;min-width:0;}
+.tournee-addr-main{
+  flex:1;min-width:0;border:none;background:none;padding:0;margin:0;
+  font:inherit;color:inherit;text-align:left;cursor:pointer;-webkit-tap-highlight-color:transparent;
+}
 .tournee-addr-name{font-size:13.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .tournee-addr-meta{font-size:11.5px;color:var(--muted);margin-top:4px;line-height:1.5;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.tournee-addr-detail{flex:0 0 100%;margin-top:2px;padding-top:8px;border-top:1px dashed var(--line);}
+.tournee-addr-detail .kv{font-size:12.5px;padding:4px 0;}
 
 /* états : lisibles d'un coup d'œil, y compris en plein soleil */
 .tournee-addr-row.is-distribue{background:#eaf3ed;}
@@ -338,6 +370,17 @@ mark{background:#fff2a8;color:inherit;border-radius:3px;padding:0 1px;}
 .zone-btn.stop{color:var(--warn);}
 .zone-btn.reopen{color:var(--muted);}
 .zone-btn:active{opacity:.85;}
+
+/* --- clôture de tournée : dernière card du carrousel, feuille récapitulative
+   et vue verrouillée --- */
+.tournee-finale .tournee-card-title{font-size:17px;}
+.tournee-finale-recap,.cloture-recap{margin:6px 0 4px;}
+.cloture-btn{
+  width:100%;margin-top:14px;padding:14px;border-radius:10px;border:none;
+  background:var(--accent);color:#fff;font-weight:800;font-size:15px;cursor:pointer;
+}
+.cloture-btn:active{opacity:.85;}
+.tournee-cloturee .tournee-card-title{color:var(--muted);}
 
 /* --- panneau de motifs (bas d'écran) --- */
 .sheet-overlay{
@@ -642,6 +685,15 @@ details.advanced summary{font-size:12.5px;color:var(--accent);cursor:pointer;fon
   padding-bottom:8px;border-bottom:2px solid var(--chip);
 }
 .admin-section-hint{margin-top:0;margin-bottom:8px;}
+
+/* --- archive des rapports de tournée --- */
+.rapport-ligne{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 0;border-bottom:1px dashed var(--line);}
+.rapport-ligne:last-child{border-bottom:none;}
+.rapport-ligne-main{flex:1;min-width:160px;}
+.rapport-ligne-titre{font-size:13.5px;font-weight:700;}
+.rapport-ligne-sub{font-size:12px;margin-top:2px;}
+.rapport-ligne-actions{display:flex;gap:6px;flex-wrap:wrap;flex:0 0 auto;}
+.rapport-btn-danger{color:var(--err);border-color:#f0c9c4;}
 
 /* Le triptyque de l'import se numérote : l'ordre des trois gestes compte. */
 .admin-step{margin-bottom:16px;}

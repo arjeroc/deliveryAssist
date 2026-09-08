@@ -10,6 +10,8 @@ window.Prep = (function () {
   var KEY = "atournee_prep_v1";
   var ZONES_KEY = "atournee_prep_zones_v1";
   var STD_KEY = "atournee_prep_std_v1";
+  var RAPPORTS_KEY = "atournee_rapports_v1";
+  var CLOTURES_KEY = "atournee_clotures_v1";
   // { [id_tournee]: { [addressId]: { lettres:n, colis:n, presse:n, statut:s, motif:'', horodatage:iso } } }
   var state = {};
   // Zones de courrier standard retenues pour la tournée, désignées par leur
@@ -25,6 +27,17 @@ window.Prep = (function () {
   // l'absence de quantité vaut précisément « rien à distribuer ici » — une
   // entrée à zéro y serait effacée au premier enregistrement.
   var standard = {};
+
+  // Archive des rapports de fin de tournée : [{ id, idTournee, dateFermeture,
+  // debut, fin, html, resume }]. Le HTML y est conservé tel qu'il a été
+  // généré à la clôture — cette liste ne relit jamais la tournée, elle garde
+  // une photographie.
+  var rapports = [];
+  // Verrou de clôture, distinct de l'archive : { [id_tournee]: rapportId }.
+  // Supprimer un vieux rapport dans l'archive ne doit jamais déverrouiller une
+  // tournée en cours ; seule "Nouvelle tournée" (resetTournee) le fait, au
+  // même titre qu'elle vide déjà zones et statuts.
+  var clotures = {};
 
   // Catégories d'items à distribuer, source unique pour toute l'application :
   // ajouter une catégorie ici suffit à la faire apparaître partout.
@@ -198,9 +211,75 @@ window.Prep = (function () {
     persistZones();
   }
 
+  function loadRapports() {
+    try {
+      var raw = localStorage.getItem(RAPPORTS_KEY);
+      rapports = raw ? JSON.parse(raw) : [];
+    } catch (e) { rapports = []; }
+  }
+
+  function persistRapports() {
+    try { localStorage.setItem(RAPPORTS_KEY, JSON.stringify(rapports)); } catch (e) { /* ignore */ }
+  }
+
+  function loadClotures() {
+    try {
+      var raw = localStorage.getItem(CLOTURES_KEY);
+      clotures = raw ? JSON.parse(raw) : {};
+    } catch (e) { clotures = {}; }
+  }
+
+  function persistClotures() {
+    try { localStorage.setItem(CLOTURES_KEY, JSON.stringify(clotures)); } catch (e) { /* ignore */ }
+  }
+
+  function uidRapport() {
+    return "rap-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8);
+  }
+
+  function estCloturee(idTournee) {
+    return !!clotures[idTournee];
+  }
+
+  function getRapport(id) {
+    return rapports.filter(function (r) { return r.id === id; })[0] || null;
+  }
+
+  function getRapportActif(idTournee) {
+    return getRapport(clotures[idTournee]);
+  }
+
+  // Archive un rapport déjà généré (lecture seule sur les données métier, la
+  // construction du HTML se fait ailleurs) et pose le verrou de clôture.
+  function cloturer(idTournee, html, resume) {
+    var rapport = {
+      id: uidRapport(), idTournee: idTournee, dateFermeture: nowISO(),
+      debut: (resume && resume.debut) || "", fin: nowISO(),
+      html: html, resume: resume || {}
+    };
+    rapports.unshift(rapport);
+    persistRapports();
+    clotures[idTournee] = rapport.id;
+    persistClotures();
+    return rapport;
+  }
+
+  function listRapports() {
+    return rapports.slice();
+  }
+
+  function supprimerRapport(id) {
+    var avant = rapports.length;
+    rapports = rapports.filter(function (r) { return r.id !== id; });
+    persistRapports();
+    return avant !== rapports.length;
+  }
+
   function load() {
     loadZones();
     loadStandard();
+    loadRapports();
+    loadClotures();
     try {
       var raw = localStorage.getItem(KEY);
       state = raw ? JSON.parse(raw) : {};
@@ -309,6 +388,18 @@ window.Prep = (function () {
     });
   }
 
+  // Même forme que listEntries, sur le registre du courrier standard : le
+  // rapport de fin de tournée a besoin des deux pour retrouver motifs et
+  // horodatages, quelle que soit la nature de l'adresse.
+  function listStandardEntries(idTournee) {
+    var b = standard[idTournee] || {};
+    return Object.keys(b).map(function (id) {
+      var e = getStandardEntry(idTournee, id);
+      e.addressId = id;
+      return e;
+    });
+  }
+
   function totals(idTournee) {
     return listEntries(idTournee).reduce(function (acc, e) {
       typeKeys().forEach(function (k) { acc[k] += e[k]; });
@@ -357,6 +448,11 @@ window.Prep = (function () {
     persistZones();
     delete standard[idTournee];
     persistStandard();
+    // Repartir à zéro est le seul geste qui lève le verrou de clôture : les
+    // rapports déjà archivés restent en place, ils ne décrivent pas la
+    // tournée qui recommence.
+    delete clotures[idTournee];
+    persistClotures();
   }
 
   return {
@@ -375,6 +471,7 @@ window.Prep = (function () {
     setStatutMany: setStatutMany,
     restore: restore,
     listEntries: listEntries,
+    listStandardEntries: listStandardEntries,
     getStandardEntry: getStandardEntry,
     setStandardStatutMany: setStandardStatutMany,
     restoreStandard: restoreStandard,
@@ -386,6 +483,13 @@ window.Prep = (function () {
     countZonesStandard: countZonesStandard,
     totals: totals,
     progress: progress,
-    resetTournee: resetTournee
+    resetTournee: resetTournee,
+
+    estCloturee: estCloturee,
+    cloturer: cloturer,
+    listRapports: listRapports,
+    getRapport: getRapport,
+    getRapportActif: getRapportActif,
+    supprimerRapport: supprimerRapport
   };
 })();
