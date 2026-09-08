@@ -459,14 +459,20 @@ window.ScanCore = (function () {
     // Un tour de boucle vidéo : la qualité d'abord, la cadence ensuite, l'OCR
     // en dernier. Renvoie la promesse de lecture, ou null si ce tour n'a rien
     // déclenché — ce qui est le cas le plus fréquent, et c'est voulu.
+    function evaluerFrame(stats) {
+      var q = qualiteFrame(stats, statsPrec, deps.seuils);
+      statsPrec = stats || null;
+      if (!q.utilisable) { majIndication(q.indication); return q; }
+      majIndication("");
+      return q;
+    }
+
     function tick(stats) {
       var e = machine.etat();
       if (e !== ETATS.VISEUR && e !== ETATS.LECTURE) return null;
 
-      var q = qualiteFrame(stats, statsPrec, deps.seuils);
-      statsPrec = stats || null;
-      if (!q.utilisable) { majIndication(q.indication); return null; }
-      majIndication("");
+      var q = evaluerFrame(stats);
+      if (!q.utilisable) return null;
       if (!cadence.pret()) return null;
 
       var angles = anglesAEssayer("video", angleRetenu, essaisVides);
@@ -497,7 +503,10 @@ window.ScanCore = (function () {
       // et la caméra s'arrêtent, puis seulement l'écran change.
       adresseId = id;
       brouillon.vider();
-      arreterAcquisition("attribution");
+      // On annule uniquement une éventuelle lecture en vol. La caméra reste
+      // visible sous le panneau d'attribution : le geste suivant repart sans
+      // réouverture ni écran noir.
+      cadence.annuler();
       machine.aller(ETATS.ATTRIBUTION);
       if (deps.onChoix) deps.onChoix(id);
       return true;
@@ -578,6 +587,7 @@ window.ScanCore = (function () {
 
       demarrer: demarrer,
       tick: tick,
+      evaluerFrame: evaluerFrame,
       poserCandidats: poserCandidats,
       choisir: choisir,
       ajusterQuantite: ajusterQuantite,

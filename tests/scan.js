@@ -295,6 +295,17 @@ async function sessionTests() {
   {
     const b = creerBanc();
     await b.session.demarrer();
+    b.session.evaluerFrame(BONNE_IMAGE);
+    b.session.evaluerFrame(BONNE_IMAGE);
+    verifie("mode photo : l'évaluation seule ne lance pas d'OCR", b.lectures.length, 0);
+    b.session.tick(BONNE_IMAGE);
+    verifie("mode photo : le déclencheur lance une seule lecture", b.lectures.length, 1);
+    b.lectures[0].resoudre({ texte: "", angle: 0 });
+    await attendre();
+  }
+  {
+    const b = creerBanc();
+    await b.session.demarrer();
     verifie("caméra ouverte une fois", b.ouvertes(), 1);
     verifie("chemin d'ouverture", b.journal, ["camera-starting", "scanning"]);
 
@@ -318,9 +329,7 @@ async function sessionTests() {
     // Le doigt tranche.
     b.session.choisir("MARTIN");
     verifie("écran d'attribution", b.session.etat(), "assigning");
-    // L'adhérence lit ce motif pour mettre la caméra en veille plutôt que de
-    // la rendre : le viseur revient dans deux gestes.
-    verifie("arrêt motivé par l'attribution", b.motifs[b.motifs.length - 1], "attribution");
+    verifie("caméra conservée pendant l'attribution", b.motifs.length, 0);
     verifie("candidats gelés", b.session.candidats().map((c) => c.row.id), ["MARTIN"]);
     b.horloge.avancer(5000);
     b.session.tick(BONNE_IMAGE);

@@ -499,7 +499,6 @@ window.Scan = (function () {
       els.overlay.style.setProperty("--scan-rotation", pivotForce + "deg");
     }
     ajusterViseur();
-    majBrutVue();
   }
 
   // La vraie solution, quand le système l'accepte : on demande le plein écran
@@ -600,7 +599,9 @@ window.Scan = (function () {
     var maintenant = Date.now();
     if (maintenant - derniereMesure >= PERIODE_MESURE) {
       derniereMesure = maintenant;
-      session.tick(mesurerFrame());
+      var stats = mesurerFrame();
+      if (modeCapture() === "photo") session.evaluerFrame(stats);
+      else session.tick(stats);
     }
     programmerBoucle();
   }
@@ -659,9 +660,20 @@ window.Scan = (function () {
     return lireAngles(capturerZone(), angles).then(function (res) {
       dernierTexteBrut = (res && res.texte) || "";
       dernierAngle = res ? res.angle : null;
-      majBrutVue();
       return res;
     });
+  }
+
+  function modeCapture() {
+    return window.Store.getSettings().scanModeCapture === "photo" ? "photo" : "video";
+  }
+
+  // Le mode Photo garde le même flux caméra et la même zone de cadrage. Il ne
+  // s'agit pas d'un sélecteur de fichier : l'utilisateur fige volontairement
+  // l'image courante, puis l'OCR travaille une seule fois dessus.
+  function capturerPhoto() {
+    if (!session || modeCapture() !== "photo") return;
+    session.tick(mesurerFrame());
   }
 
   // ---------------------------------------------------------------------
@@ -720,14 +732,6 @@ window.Scan = (function () {
       candidats.map(function (x, i) { return candidatHTML(x, i === 0, faible); }).join("");
   }
 
-  // Le texte brut reste consultable : pendant la phase de test, c'est ce qui
-  // permet de comprendre pourquoi une étiquette n'a pas été reconnue.
-  function texteLuHTML(texte) {
-    if (!texte || !texte.trim()) return "";
-    return '<details class="scan-brut"><summary>Texte lu par l\'appareil</summary>' +
-      '<pre>' + escapeHtml(texte.trim()) + '</pre></details>';
-  }
-
   function afficherTravail(message) {
     definirPleinEcran(false);
     els.body.innerHTML =
@@ -753,29 +757,29 @@ window.Scan = (function () {
           // la vidéo et finissait par désigner autre chose que la zone lue.
           '<div class="scan-cadre" aria-hidden="true"></div>' +
           '<div class="scan-hint" id="scanHint"></div>' +
-          // Le ✕ du bandeau, rendu à l'image : c'est le seul geste de sortie,
-          // il ne doit coûter ni une ligne de hauteur ni un aller-retour.
           '<button type="button" class="scan-fermer" data-action="scan-close" ' +
-            'aria-label="Fermer le scan">✕</button>' +
+            'aria-label="Fermer le scan"><span>✕</span></button>' +
+          (modeCapture() === "photo"
+            ? '<button type="button" class="scan-capture" data-action="scan-capture" ' +
+                'aria-label="Prendre la photo">📷</button>'
+            : "") +
         '</div>' +
         '<div class="scan-results">' +
           '<div class="scan-suggestions" id="scanSuggestions"></div>' +
-          '<div id="scanBrut"></div>' +
-          '<button type="button" class="scan-lien" data-action="scan-photo">' +
-            '📷 Prendre une photo à la place</button>' +
         '</div>' +
       '</div>';
     var cadre = document.getElementById("scanViseur");
     cadre.insertBefore(assurerVideo(), cadre.firstChild);
     viseurMonte = true;
     ajusterViseur();
-    majBrutVue();
   }
 
   // Le passage scanning ↔ recognizing survient une fois par seconde : il ne
   // redessine que l'indication. Les cartes, elles, ne bougent que lorsqu'une
   // lecture apporte mieux (onCandidats) — sinon elles clignoteraient.
   function rendreViseur() {
+    var attribution = document.getElementById("scanAttribution");
+    if (attribution) attribution.remove();
     if (!viseurMonte) { monterViseur(); majCandidatsVue(); }
     majIndicationVue();
   }
@@ -798,25 +802,6 @@ window.Scan = (function () {
     box.innerHTML = candidats.length
       ? candidatsHTML(candidats)
       : '<p class="scan-attente">Les adresses possibles s\'afficheront ici.</p>';
-  }
-
-  // Ce que la caméra a réellement livré au moteur, et dans quel repère. Un
-  // viseur muet ne dit pas s'il ne lit rien ou s'il lit à côté ; ces deux
-  // lignes le disent, et évitent de deviner à distance.
-  function majBrutVue() {
-    var box = document.getElementById("scanBrut");
-    if (!box) return;
-    var repere = verrouActif
-      ? "écran verrouillé en paysage"
-      : (pivotForce ? "pivot forcé " + pivotForce + "°, image redressée de " +
-          (-pivotForce) + "°" : "paysage natif");
-    var flux = (video && video.videoWidth)
-      ? video.videoWidth + "×" + video.videoHeight
-      : "flux non démarré";
-    box.innerHTML = '<details class="scan-brut"><summary>Ce que lit l\'appareil</summary>' +
-      '<pre>' + escapeHtml(flux + " · " + repere +
-        (dernierAngle ? " · angle OCR " + dernierAngle + "°" : "") +
-        "\n\n" + (dernierTexteBrut.trim() || "(rien lu)")) + '</pre></details>';
   }
 
   function adresseCarteHTML(row) {
@@ -851,12 +836,21 @@ window.Scan = (function () {
   }
 
   function rendreAttribution() {
-    viseurMonte = false;
     var row = window.Store.findRow(session.adresseId());
     if (!row) { session.changerAdresse(); return; }
     var q = session.quantites();
     var total = session.totalQuantites();
-    els.body.innerHTML =
+    if (!viseurMonte) monterViseur();
+    var viseur = document.getElementById("scanViseur");
+    var overlay = document.getElementById("scanAttribution");
+    if (!overlay) {
+      overlay = document.createElement("div");
+      overlay.id = "scanAttribution";
+      overlay.className = "scan-attribution-overlay";
+      viseur.appendChild(overlay);
+    }
+    overlay.innerHTML =
+      '<div class="scan-attribution-panel">' +
       '<div class="scan-titre">Adresse sélectionnée</div>' +
       adresseCarteHTML(row) +
       dejaDansTourneeHTML(row) +
@@ -874,7 +868,8 @@ window.Scan = (function () {
       '</div>' +
       '<button type="button" class="scan-valider" data-action="scan-ajouter"' +
         (total ? "" : " disabled") + '>Ajouter à la tournée</button>' +
-      '<button type="button" class="scan-lien" data-action="scan-changer">Changer d\'adresse</button>';
+      '<button type="button" class="scan-lien" data-action="scan-changer">Changer d\'adresse</button>' +
+      '</div>';
   }
 
   function rendrePhoto() {
@@ -891,7 +886,6 @@ window.Scan = (function () {
       (videoDispo
         ? '<button type="button" class="scan-lien" data-action="scan-video">🎥 Revenir au viseur</button>'
         : "") +
-      texteLuHTML(session.texteLu()) +
       '<p class="scan-note">Le moteur de lecture (quelques Mo) est téléchargé au ' +
       'premier usage : prévois-le avant de partir en tournée.</p>';
     brancherFichier();
@@ -915,8 +909,7 @@ window.Scan = (function () {
     viseurMonte = false;
     els.body.innerHTML =
       '<div class="status err">' + escapeHtml(C.messageErreurCamera(err)) + '</div>' +
-      '<button type="button" class="scan-cta" data-action="scan-video">🎥 Réessayer la caméra</button>' +
-      '<button type="button" class="scan-lien" data-action="scan-photo">📷 Prendre une photo</button>';
+      '<button type="button" class="scan-cta" data-action="scan-video">🎥 Réessayer la caméra</button>';
   }
 
   // Le viseur prend l'écran entier : ni bandeau de titre, ni marge, ni
@@ -934,8 +927,9 @@ window.Scan = (function () {
   function rendre(info) {
     if (!els.body) return;
     var etat = session.etat();
-    titrer(etat === C.ETATS.ATTRIBUTION ? "Attribuer les objets" : "Scanner une étiquette");
-    definirPleinEcran(etat === C.ETATS.DEMARRAGE || etat === C.ETATS.VISEUR || etat === C.ETATS.LECTURE);
+    titrer("Scanner une étiquette");
+    definirPleinEcran(etat === C.ETATS.DEMARRAGE || etat === C.ETATS.VISEUR ||
+      etat === C.ETATS.LECTURE || etat === C.ETATS.ATTRIBUTION);
     switch (etat) {
       case C.ETATS.DEMARRAGE:
       case C.ETATS.VISEUR:
@@ -1071,6 +1065,7 @@ window.Scan = (function () {
   function pick(id) { if (session) session.choisir(id); }
   function ajusterQuantite(type, delta) { if (session) session.ajusterQuantite(type, delta); }
   function ajouterALaTournee() { if (session) session.ajouterALaTournee(); }
+  function capturePhoto() { capturerPhoto(); }
   function changerAdresse() { if (session) session.changerAdresse(); }
   function modePhoto() { if (session) session.modePhoto(); }
   function modeVideo() { if (session) session.demarrer(); }
@@ -1082,6 +1077,7 @@ window.Scan = (function () {
     pick: pick,
     ajusterQuantite: ajusterQuantite,
     ajouterALaTournee: ajouterALaTournee,
+    capturePhoto: capturePhoto,
     changerAdresse: changerAdresse,
     modePhoto: modePhoto,
     modeVideo: modeVideo,

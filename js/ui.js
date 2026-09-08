@@ -3084,6 +3084,9 @@ window.UI = (function () {
         '<summary>Réglages avancés</summary>' +
         '<label class="switch-row"><input type="checkbox" id="admGeocodage" ' + (s.geocodageActif ? "checked" : "") + '> Activer le géocodage automatique (API adresse gouvernementale)</label>' +
         '<label class="switch-row"><input type="checkbox" id="admScan" ' + (s.scanActif !== false ? "checked" : "") + '> Scan d\'étiquette par la caméra (expérimental)</label>' +
+        '<label for="admScanMode">Mode de capture</label>' +
+        '<select id="admScanMode"><option value="video"' + (s.scanModeCapture !== "photo" ? " selected" : "") + '>Vidéo — recherche continue</option>' +
+        '<option value="photo"' + (s.scanModeCapture === "photo" ? " selected" : "") + '>Photo — déclenchement manuel</option></select>' +
         '<div class="range-row">' +
           '<label for="admScanIntervalle">Fréquence de recherche du scan (<span id="admScanIntervalleValeur">' +
             (s.scanIntervalleMs || 700) + '</span>&nbsp;ms entre deux lectures)</label>' +
@@ -3185,6 +3188,9 @@ window.UI = (function () {
     document.getElementById("admScan").addEventListener("change", function (e) {
       S.setSetting("scanActif", e.target.checked);
       renderPrep();
+    });
+    document.getElementById("admScanMode").addEventListener("change", function (e) {
+      S.setSetting("scanModeCapture", e.target.value);
     });
     document.getElementById("admScanIntervalle").addEventListener("input", function (e) {
       document.getElementById("admScanIntervalleValeur").textContent = e.target.value;
@@ -3651,6 +3657,9 @@ window.UI = (function () {
         break;
       case "scan-changer":
         Scan.changerAdresse();
+        break;
+      case "scan-capture":
+        Scan.capturePhoto();
         break;
       case "scan-photo":
         Scan.modePhoto();

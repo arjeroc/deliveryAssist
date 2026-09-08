@@ -47,6 +47,9 @@ window.Store = (function () {
       // réactive ; la cadence (scan-core.js) empêche de toute façon deux
       // lectures de se chevaucher.
       scanIntervalleMs: 700,
+      // Mode de capture : vidéo analyse le viseur en continu ; photo attend le
+      // déclencheur posé sur le viseur et ne lit qu'à ce moment-là.
+      scanModeCapture: "video",
       // Sens du pivot forcé quand le téléphone reste portrait (verrou de
       // rotation) : les deux sens ne se valent pas selon l'appareil et le
       // navigateur, d'où le réglage plutôt qu'un choix figé dans le code.
