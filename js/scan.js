@@ -516,6 +516,7 @@ window.Scan = (function () {
   }
 
   function afficherTravail(message) {
+    definirCorpsPlein(false);
     els.body.innerHTML =
       '<div class="scan-travail">' +
         '<div class="scan-spinner"></div>' +
@@ -673,12 +674,22 @@ window.Scan = (function () {
       '<button type="button" class="scan-lien" data-action="scan-photo">📷 Prendre une photo</button>';
   }
 
+  // Le viseur réclame tout l'écran — sans le padding ni la colonne à 760px
+  // qui conviennent aux autres écrans (attribution, photo, erreur) — pour
+  // que 60/40 se lise sur la largeur réelle de l'appareil, pas sur une
+  // colonne déjà réduite. Seul ce panneau porte la classe ; elle retombe
+  // partout ailleurs.
+  function definirCorpsPlein(actif) {
+    if (els.body) els.body.classList.toggle("scan-plein", !!actif);
+  }
+
   // Un seul aiguillage de rendu, appelé à chaque changement d'état : l'écran
   // ne peut donc pas rester en retard sur la mécanique.
   function rendre(info) {
     if (!els.body) return;
     var etat = session.etat();
     titrer(etat === C.ETATS.ATTRIBUTION ? "Attribuer les objets" : "Scanner une étiquette");
+    definirCorpsPlein(etat === C.ETATS.DEMARRAGE || etat === C.ETATS.VISEUR || etat === C.ETATS.LECTURE);
     switch (etat) {
       case C.ETATS.DEMARRAGE:
       case C.ETATS.VISEUR:
@@ -778,6 +789,7 @@ window.Scan = (function () {
     libererCamera();
     libererWorker();
     session = null;
+    definirCorpsPlein(false);
     if (els.body) els.body.innerHTML = "";
     viseurMonte = false;
     titrer("Scanner une étiquette");
