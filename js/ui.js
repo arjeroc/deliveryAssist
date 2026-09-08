@@ -2101,7 +2101,10 @@ window.UI = (function () {
     typees.concat(standards).forEach(function (it) {
       var row = it.row;
       if (!vusGPS[row.id] && S.hasPosition(row)) { vusGPS[row.id] = true; gpsCount++; }
-      if (!vusNotes[row.id] && row.notes) { vusNotes[row.id] = true; notes.push({ row: row }); }
+      if (!vusNotes[row.id] && row.notes) {
+        vusNotes[row.id] = true;
+        notes.push({ row: row, nouvelle: Prep.estNoteNouvelle(row.id, row.notes) });
+      }
       if (it.entry.horodatage) horodatages.push(it.entry.horodatage);
     });
     horodatages.sort();
@@ -2135,18 +2138,13 @@ window.UI = (function () {
   }
 
   // Accepte aussi bien le bilan complet (calculé en direct) que le résumé
-  // allégé archivé avec un rapport (bilan.notes devient bilan.notesCount) —
-  // l'archive ne garde pas les lignes détaillées, déjà dans le HTML du rapport.
+  // allégé archivé avec un rapport — les deux portent les mêmes totaux.
   function recapLignesHTML(bilan) {
-    var notesN = bilan.notes ? bilan.notes.length : (bilan.notesCount || 0);
     return '<div class="kv"><span>Total éléments</span><strong>' + bilan.total + '</strong></div>' +
       '<div class="kv"><span>Distribués</span><strong>' + bilan.distribuees + '</strong></div>' +
       '<div class="kv"><span>Non distribués</span><strong>' + bilan.abandonnees + '</strong></div>' +
       (bilan.restantes ? '<div class="kv"><span>Restants</span><strong>' + bilan.restantes + '</strong></div>' : "") +
-      '<div class="kv"><span>Progression</span><strong>' + bilan.pct + ' %</strong></div>' +
-      '<div class="kv"><span>Zones parcourues</span><strong>' + bilan.zones + '</strong></div>' +
-      '<div class="kv"><span>Points GPS disponibles</span><strong>' + bilan.gpsCount + '</strong></div>' +
-      '<div class="kv"><span>Notes enregistrées</span><strong>' + notesN + '</strong></div>';
+      '<div class="kv"><span>Progression</span><strong>' + bilan.pct + ' %</strong></div>';
   }
 
   function tourneeNavHTML(idx, total) {
@@ -2204,6 +2202,11 @@ window.UI = (function () {
       return '<li><strong>' + escapeHtml([o.row.numero, o.row.rue].filter(Boolean).join(" ")) + '</strong> — ' + escapeHtml(o.row.notes) + '</li>';
     }
 
+    // Le rapport ne cite que les notes nouvelles ou modifiées depuis le
+    // dernier rapport : celles déjà lues à cette occasion n'ont rien à
+    // apprendre à qui relit le suivi d'une tournée récurrente.
+    var notesNouvelles = bilan.notes.filter(function (o) { return o.nouvelle; });
+
     var categoriesLignes = bilan.categories.map(function (c) {
       return '<tr><td>' + c.icon + ' ' + escapeHtml(c.label) + '</td><td>' + c.total + '</td><td>' + c.distribue + '</td><td>' + c.abandonne + '</td><td>' + c.restant + '</td></tr>';
     }).join("");
@@ -2244,10 +2247,10 @@ window.UI = (function () {
             bilan.nonDistributions.map(ligneNonDistrib).join("") +
           '</tbody></table></div>'
         : '<p class="muted">Toutes les distributions ont abouti.</p>') +
-      '<h2>Observations' + (bilan.notes.length ? "" : " — aucune") + '</h2>' +
-      (bilan.notes.length
-        ? '<ul>' + bilan.notes.map(ligneObservation).join("") + '</ul>'
-        : '<p class="muted">Aucune note enregistrée pendant cette tournée.</p>') +
+      '<h2>Observations' + (notesNouvelles.length ? "" : " — aucune") + '</h2>' +
+      (notesNouvelles.length
+        ? '<ul>' + notesNouvelles.map(ligneObservation).join("") + '</ul>'
+        : '<p class="muted">Aucune note nouvelle enregistrée pendant cette tournée.</p>') +
       '</body></html>';
   }
 
@@ -2275,6 +2278,13 @@ window.UI = (function () {
       notesCount: bilan.notes.length, categories: bilan.categories, debut: bilan.debut
     };
     Prep.cloturer(idT, html, resumeArchive);
+    // Les notes citées dans ce rapport sont désormais connues : le prochain
+    // rapport de cette tournée ne les répétera pas si elles n'ont pas changé.
+    Prep.marquerNotesVues(bilan.notes.map(function (o) { return { addressId: o.row.id, notes: o.row.notes }; }));
+    // La tournée est close : sa préparation (quantités, zones, statuts) est
+    // vidée pour repartir propre la prochaine fois, sans lever le verrou de
+    // clôture qui vient d'être posé.
+    Prep.viderPreparation(idT);
     closeSheet();
     ouvrirRapportDansOnglet(html);
     toast("Tournée clôturée. Rapport généré.", "ok");
@@ -2596,8 +2606,8 @@ window.UI = (function () {
       '</div>' +
       '<button class="suivi-resume-toggle" data-action="suivi-resume-basculer" aria-expanded="' + suiviResumeDeplie + '">' +
         '<span class="pc-chevron">' + (suiviResumeDeplie ? "▾" : "▸") + '</span>' +
-        '<span class="suivi-resume-titre"><strong>' + a.distribuees + '</strong> / ' + a.total +
-          ' adresses distribuées — ' + Math.round(pctDist) + ' %</span>' +
+        '<span class="suivi-resume-titre"><strong>' + Math.round(pctDist) + ' %</strong> — ' +
+          a.distribuees + ' / ' + a.total + ' adresses distribuées</span>' +
         (a.abandonnees ? '<span class="suivi-resume-aband">' + a.abandonnees + ' non distribuée(s)</span>' : "") +
       '</button>' +
       (suiviResumeDeplie
