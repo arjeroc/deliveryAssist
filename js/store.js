@@ -69,11 +69,38 @@ window.Store = (function () {
     return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
   }
 
-  // Normalisation de recherche : décomposition Unicode, suppression des
-  // diacritiques, majuscules, et toute ponctuation ramenée à un espace.
+  // Quelques exports historiques ont été encodés deux fois en UTF-8 :
+  // « HÃ©lÃ¨ne » arrive alors dans le navigateur à la place de « Hélène ».
+  // On le répare uniquement quand la signature d'un tel accident est présente;
+  // une donnée Unicode saine n'est donc jamais réinterprétée.
+  function reparerEncodage(v) {
+    var texte = (v === undefined || v === null) ? "" : String(v);
+    if (!/[ÃÂ]/.test(texte)) return texte;
+    try {
+      var octets = new Uint8Array(texte.length);
+      for (var i = 0; i < texte.length; i++) {
+        if (texte.charCodeAt(i) > 255) return texte;
+        octets[i] = texte.charCodeAt(i);
+      }
+      if (typeof TextDecoder !== "undefined") {
+        return new TextDecoder("utf-8", { fatal: true }).decode(octets);
+      }
+      // Les navigateurs Android récents ont TextDecoder ; ce repli conserve
+      // toutefois la correction dans les environnements de test plus anciens.
+      var percent = "";
+      for (var j = 0; j < octets.length; j++) {
+        percent += "%" + octets[j].toString(16).padStart(2, "0");
+      }
+      return decodeURIComponent(percent);
+    } catch (e) { return texte; }
+  }
+
+  // Normalisation de recherche : réparation éventuelle de l'encodage,
+  // décomposition Unicode, suppression des diacritiques, majuscules, et toute
+  // ponctuation ramenée à un espace.
   //   "Élodie Léa-Marie l'Abbé"  ->  "ELODIE LEA MARIE L ABBE"
   function normalize(s) {
-    return (s === undefined || s === null ? "" : String(s))
+    return reparerEncodage(s)
       .normalize("NFD")
       .replace(/[\u0300-\u036f]/g, "")
       .toUpperCase()

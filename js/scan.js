@@ -815,7 +815,7 @@ window.Scan = (function () {
       : "flux non démarré";
     box.innerHTML = '<details class="scan-brut"><summary>Ce que lit l\'appareil</summary>' +
       '<pre>' + escapeHtml(flux + " · " + repere +
-        (dernierAngle === null ? "" : " · angle OCR " + dernierAngle + "°") +
+        (dernierAngle ? " · angle OCR " + dernierAngle + "°" : "") +
         "\n\n" + (dernierTexteBrut.trim() || "(rien lu)")) + '</pre></details>';
   }
 

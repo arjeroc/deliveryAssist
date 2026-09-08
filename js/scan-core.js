@@ -238,23 +238,17 @@ window.ScanCore = (function () {
       : { x: largeur - r.y - r.h, y: r.x, w: r.h, h: r.w };
   }
 
-  // Stratégie d'orientation. En photo, le cliché est unique : on peut se payer
-  // les quatre angles, comme avant. En vidéo, une image par seconde — les
-  // essayer tous quadruplerait le temps de lecture alors que l'étiquette est
-  // presque toujours tenue à l'endroit. On lit donc l'orientation qui a
-  // fonctionné (0° au départ), et on ne dépense un angle de secours, un seul,
-  // qu'après une lecture restée muette : le tour suivant essaie 90°, puis
-  // 270°, puis 180°, jusqu'à ce qu'un angle parle — il devient alors le
-  // principal, et les tours suivants redeviennent simples.
+  // Stratégie d'orientation. La photo est ponctuelle : on peut se payer les
+  // quatre angles. En vidéo, l'image est déjà redressée lors de la capture
+  // (scan.js) pour correspondre au cadre vu. Relancer l'OCR à 90° après un
+  // échec double la latence sans aider un smartphone Android récent ; ce repli
+  // est donc réservé au mode photo.
   var ANGLES_PHOTO = [0, 90, 270, 180];
   var ANGLES_SECOURS = [90, 270, 180];
 
   function anglesAEssayer(mode, angleRetenu, essaisVides) {
     if (mode === "photo") return ANGLES_PHOTO.slice();
-    var principal = angleRetenu || 0;
-    if (!essaisVides) return [principal];
-    var secours = ANGLES_SECOURS[(essaisVides - 1) % ANGLES_SECOURS.length];
-    return secours === principal ? [principal] : [principal, secours];
+    return [0];
   }
 
   // ---------------------------------------------------------------------

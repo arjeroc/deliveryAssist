@@ -191,10 +191,8 @@ async function suite() {
 
     verifie("photo : les quatre angles", C.anglesAEssayer("photo"), [0, 90, 270, 180]);
     verifie("vidéo : l'orientation retenue seule", C.anglesAEssayer("video", 0, 0), [0]);
-    verifie("vidéo : un angle de secours après un échec", C.anglesAEssayer("video", 0, 1), [0, 90]);
-    verifie("vidéo : l'angle de secours change", C.anglesAEssayer("video", 0, 2), [0, 270]);
-    verifie("vidéo : pas deux fois le même angle", C.anglesAEssayer("video", 90, 1), [90]);
-    verifie("vidéo : l'orientation retenue reste en tête", C.anglesAEssayer("video", 270, 3), [270, 180]);
+    verifie("vidéo : aucune rotation OCR coûteuse après un échec", C.anglesAEssayer("video", 0, 1), [0]);
+    verifie("vidéo : le flux redressé reste lu à 0°", C.anglesAEssayer("video", 270, 3), [0]);
   }
 
   console.log("\n=== 6. Cartes : on ne remplace que sur du neuf, et du meilleur ===");
@@ -408,7 +406,7 @@ async function sessionTests() {
     verifie("écriture depuis le repli", b.prep.appels, [["tm0", "A", "lettres", 1]]);
   }
 
-  console.log("\n=== 13. Une lecture muette dépense un angle de secours ===");
+  console.log("\n=== 13. Une lecture muette ne double pas le travail OCR vidéo ===");
   {
     const b = creerBanc();
     await b.session.demarrer();
@@ -417,12 +415,12 @@ async function sessionTests() {
     await attendre();
     b.horloge.avancer(1000);
     b.session.tick(BONNE_IMAGE);
-    verifie("deuxième lecture avec secours", b.lectures[1].angles, [0, 90]);
-    b.lectures[1].resoudre({ texte: "LEROY", angle: 90 });
+    verifie("deuxième lecture toujours droite", b.lectures[1].angles, [0]);
+    b.lectures[1].resoudre({ texte: "LEROY", angle: 0 });
     await attendre();
     b.horloge.avancer(1000);
     b.session.tick(BONNE_IMAGE);
-    verifie("l'angle qui a parlé devient le principal", b.lectures[2].angles, [90]);
+    verifie("la lecture suivante reste droite", b.lectures[2].angles, [0]);
     verifie("cartes conservées pendant l'analyse suivante",
       b.session.candidats().map((c) => c.row.id), ["LEROY"]);
     b.lectures[2].resoudre({ texte: "", angle: 90 });
@@ -511,9 +509,10 @@ function rapprochementTests() {
     ligne("a4", "DUPONT", "9", "RUE DES ROSIERS"),
     ligne("a5", "ROY", "3", "PLACE DU MARCHE"),
     // Étiquettes terrain : une impression nette et une étiquette à fenêtre,
-    // dont l'OCR peut confondre O/0, I/1 ou perdre un caractère.
+    // dont l'OCR peut confondre O/0, I/1, perdre un caractère ou hériter d'un
+    // ancien encodage UTF-8 double.
     ligne("a6", "HILAIRE COURTOIS", "1", "ROUTE DE CHEZ FOUR"),
-    ligne("a7", "FARGEOT HELENE", "", "LIEU DIT LES PRADELIERES"),
+    ligne("a7", "FARGEOT HÃ©lÃ¨ne", "", "LIEU DIT LES PRADELIERES"),
   ].join("\n"));
 
   const ids = (texte) => S.matchTexteLibre(texte, 5).map((c) => c.row.id);
@@ -535,6 +534,8 @@ function rapprochementTests() {
     ids("M HILAIRE C0URT0IS\nCHEZ FRANCILLOU\n1 ROUTE DE CHEZ FOUR\n16260 CELLEFROUIN")[0], "a6");
   verifie("étiquette terrain à fenêtre : patronyme mal lu et lieu-dit",
     ids("MME FARGEDT HELENE\nLIEU DIT LES PRADEL1ERES\n16260 CELLEFROUIN")[0], "a7");
+  verifie("nom et prénom malgré l'encodage historique du CSV",
+    ids("FARGEOT HELENE")[0], "a7");
 }
 
 function fin() {
