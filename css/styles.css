@@ -625,33 +625,34 @@ details.advanced summary{font-size:12.5px;color:var(--accent);cursor:pointer;fon
   font-size:12px;line-height:1.5;white-space:pre-wrap;overflow-x:auto;
 }
 
-/* --- scan : viseur vidéo --- */
-/* .scan-live tient le viseur fixe d'un côté et les résultats, seuls à
-   défiler, de l'autre : c'est elle qui reçoit toute la hauteur que #scanBody
-   (voir plus haut) lui laisse, sans quoi flex sur .scan-results n'aurait rien
-   à contraindre. Empilés en portrait (le geste courant, une main) ; côte à
-   côte en paysage (voir plus bas) — le gap sert les deux dispositions. */
-.scan-live{display:flex;flex-direction:column;gap:10px;height:100%;min-height:0;}
+/* --- scan : viseur vidéo ---
+   Une adresse s'écrit à l'horizontale : le scan se tient toujours en
+   paysage, téléphone tourné — ce n'est pas une déclinaison parmi d'autres,
+   c'est la seule disposition de cet écran, portrait oublié. Capture et
+   résultats se posent donc côte à côte, jamais l'un sous l'autre. */
+/* .scan-live tient le viseur d'un côté et les résultats, seuls à défiler,
+   de l'autre : c'est elle qui reçoit toute la hauteur que #scanBody (voir
+   plus haut) lui laisse, sans quoi flex sur .scan-results n'aurait rien à
+   contraindre. */
+.scan-live{display:flex;flex-direction:row;gap:10px;height:100%;min-height:0;}
 /* Le conteneur reçoit en JS le rapport exact de l'image, et la vidéo le
    remplit sans recadrage (fill) : le cadre dessiné ci-dessous tombe alors au
    pixel près sur la zone découpée pour l'OCR — quelle que soit la taille de
    la boîte, puisque .scan-cadre et la capture OCR partagent les mêmes
-   fractions (voir CADRE_PORTRAIT / CADRE_PAYSAGE dans scan.js), indépendamment
-   de l'étirement. */
-/* La moitié de l'écran, quasi la taille d'avant (l'aspect-ratio 4/3 sur
-   toute la largeur) : la détection a besoin de cette surface, seuls les
-   résultats en dessous perdaient leur propre espace. */
+   fractions (voir CADRE dans scan.js), indépendamment de l'étirement. */
+/* 60 % de la largeur, toute la hauteur laissée par #scanBody : la détection
+   a besoin de cette surface, les résultats gardent les 40 % restants. */
 .scan-viseur{
-  position:relative;width:100%;flex:0 0 auto;
-  height:50vh;min-height:260px;max-height:420px;background:#0d0f0d;
+  position:relative;flex:0 1 60%;height:100%;background:#0d0f0d;
   border-radius:14px;overflow:hidden;
 }
 .scan-viseur video{position:absolute;inset:0;width:100%;height:100%;object-fit:fill;display:block;}
-/* Mêmes fractions que CADRE_PORTRAIT dans scan.js : 86 % de large, 86 % de
-   haut, centré — quasi carré. La marge de sécurité de la capture déborde de
-   ce trait, exprès. Le pendant paysage est plus bas, dans le media query. */
+/* Mêmes fractions que CADRE dans scan.js : 90 % de large, 70 % de haut,
+   centré — un rectangle large, pour une adresse lue à l'horizontale plutôt
+   qu'un cadre carré qui la compresserait. La marge de sécurité de la
+   capture déborde de ce trait, exprès. */
 .scan-cadre{
-  position:absolute;left:7%;top:7%;width:86%;height:86%;
+  position:absolute;left:5%;top:15%;width:90%;height:70%;
   border:2px solid rgba(255,255,255,.95);border-radius:10px;
   box-shadow:0 0 0 100vmax rgba(0,0,0,.38);
 }
@@ -662,32 +663,12 @@ details.advanced summary{font-size:12.5px;color:var(--accent);cursor:pointer;fon
 .scan-hint-alerte{color:#ffd9a8;}
 /* Seule zone défilante du viseur : le scan reste visible pendant qu'on
    parcourt les adresses trouvées. */
-.scan-results{flex:1 1 auto;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch;}
+.scan-results{flex:1 1 40%;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch;}
 .scan-suggestions{min-height:64px;}
 .scan-attente{margin:0;padding:18px 8px;text-align:center;color:var(--muted);font-size:13px;}
 .scan-lien{
   display:block;width:100%;padding:14px 8px;border:none;background:none;text-align:center;
   color:var(--accent);font-size:14px;font-weight:700;cursor:pointer;
-}
-
-/* --- scan : disposition paysage ---
-   Une adresse s'écrit à l'horizontale : posée à plat sur un écran resté
-   vertical, elle n'a droit qu'à une bande pincée entre les bords du cadre.
-   Tourné, le téléphone offre une vraie largeur — ce n'est pas la mise en
-   page portrait pivotée de 90°, c'est une disposition à part : les deux
-   zones côte à côte plutôt qu'empilées, un cadre large plutôt que carré.
-   Même seuil que PAYSAGE_MEDIA dans scan.js : sous cette hauteur, un écran
-   plus large que haut est un téléphone couché, pas une fenêtre de bureau. */
-@media (orientation: landscape) and (max-height: 560px) {
-  .scan-live{flex-direction:row;}
-  .scan-viseur{
-    flex:0 1 60%;width:auto;height:100%;
-    min-height:0;max-height:none;
-  }
-  /* Mêmes fractions que CADRE_PAYSAGE dans scan.js : 90 % de large, 70 % de
-     haut, centré — un rectangle large, pour une adresse lue à l'horizontale. */
-  .scan-cadre{left:5%;top:15%;width:90%;height:70%;}
-  .scan-results{flex:1 1 40%;}
 }
 
 /* --- scan : attribution des objets suivis --- */
