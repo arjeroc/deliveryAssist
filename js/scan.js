@@ -38,13 +38,32 @@ window.Scan = (function () {
   var LARGEUR_MIN = 1000;   // en deçà, on agrandit : le moteur y perd
   var LARGEUR_OCR = 1200;   // largeur visée pour le recadrage vidéo
 
-  // Cadre de capture, en fraction de l'image. Ces trois nombres sont aussi
-  // ceux du cadre dessiné en CSS (.scan-cadre) : la marge, elle, déborde
-  // volontairement du trait visible, pour rattraper un nom écrit de travers.
-  // Largeur et hauteur égales : un cadre quasi carré, plutôt qu'une fente
-  // horizontale, laisse toute son adresse à une étiquette lue à la verticale
-  // comme à l'horizontale, sans la compresser.
-  var CADRE = { partLargeur: 0.86, partHauteur: 0.86, marge: 0.12 };
+  // Cadre de capture, en fraction de l'image. Ces nombres sont aussi ceux du
+  // cadre dessiné en CSS (.scan-cadre, et son pendant en paysage) : la marge,
+  // elle, déborde volontairement du trait visible, pour rattraper un nom
+  // écrit de travers.
+  //
+  // Deux cadres, pas un compromis entre les deux : une adresse s'écrit à
+  // l'horizontale, et c'est en paysage — l'appareil tourné, pas l'écran
+  // pivoté en CSS — que cette forme se lit le mieux, sur une vraie largeur
+  // plutôt qu'une bande pincée d'un écran resté vertical.
+  var CADRE_PORTRAIT = { partLargeur: 0.86, partHauteur: 0.86, marge: 0.12 };
+  var CADRE_PAYSAGE = { partLargeur: 0.90, partHauteur: 0.70, marge: 0.12 };
+
+  // Même seuil que le media query CSS (voir .scan-live en paysage) : sous
+  // cette hauteur, un écran plus large que haut est un téléphone couché, pas
+  // une fenêtre de bureau large ouverte à plat.
+  var PAYSAGE_MEDIA = "(orientation: landscape) and (max-height: 560px)";
+
+  function enPaysage() {
+    return !!(window.matchMedia && window.matchMedia(PAYSAGE_MEDIA).matches);
+  }
+
+  // Lu à chaque image : une rotation en cours de scan change de cadre sans
+  // qu'il faille redémarrer la session.
+  function cadreActuel() {
+    return enPaysage() ? CADRE_PAYSAGE : CADRE_PORTRAIT;
+  }
 
   var INTERVALLE_OCR_DEFAUT = 700; // ms entre deux lectures, jamais par image
   var INTERVALLE_OCR_MIN = 400;    // en dessous, la caméra peine à fournir une image neuve
@@ -422,7 +441,7 @@ window.Scan = (function () {
 
   function mesurerFrame() {
     if (!video || !video.videoWidth) return null;
-    var r = C.rectCapture(video.videoWidth, video.videoHeight, CADRE);
+    var r = C.rectCapture(video.videoWidth, video.videoHeight, cadreActuel());
     var h = Math.max(1, Math.round(ANALYSE_LARGEUR * r.h / r.w));
     var c = canvasAnalyse;
     if (c.width !== ANALYSE_LARGEUR || c.height !== h) { c.width = ANALYSE_LARGEUR; c.height = h; }
@@ -435,7 +454,7 @@ window.Scan = (function () {
   // le temps d'OCR, en soustrayant au moteur tout ce qui n'est pas l'étiquette.
   function capturerZone() {
     if (!video || !video.videoWidth) return null;
-    var r = C.rectCapture(video.videoWidth, video.videoHeight, CADRE);
+    var r = C.rectCapture(video.videoWidth, video.videoHeight, cadreActuel());
     var facteur = 1;
     if (r.w > LARGEUR_OCR) facteur = LARGEUR_OCR / r.w;
     else if (r.w < LARGEUR_MIN) facteur = Math.min(2, LARGEUR_MIN / r.w);
