@@ -636,9 +636,12 @@ details.advanced summary{font-size:12.5px;color:var(--accent);cursor:pointer;fon
    pixel près sur la zone découpée pour l'OCR — quelle que soit la hauteur
    choisie ici, puisque .scan-cadre et la capture OCR partagent les mêmes
    fractions (voir CADRE dans scan.js), indépendamment de l'étirement. */
+/* La moitié de l'écran, quasi la taille d'avant (l'aspect-ratio 4/3 sur
+   toute la largeur) : la détection a besoin de cette surface, seuls les
+   résultats en dessous perdaient leur propre espace. */
 .scan-viseur{
   position:relative;width:100%;flex:0 0 auto;
-  height:27vh;min-height:190px;max-height:255px;background:#0d0f0d;
+  height:50vh;min-height:260px;max-height:420px;background:#0d0f0d;
   border-radius:14px;overflow:hidden;margin-bottom:10px;
 }
 .scan-viseur video{position:absolute;inset:0;width:100%;height:100%;object-fit:fill;display:block;}
