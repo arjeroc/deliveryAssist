@@ -596,6 +596,29 @@ details.advanced summary{font-size:12.5px;color:var(--accent);cursor:pointer;fon
 #scanOverlay.scan-plein .topbar{display:none;}
 #scanOverlay.scan-plein #scanBody{padding:0;max-width:none;overflow:hidden;}
 
+/* Le pivot forcé : sur le terrain, tourner le téléphone ne suffit pas
+   toujours — verrou de rotation activé, ou navigateur qui refuse de
+   retourner l'écran pour une page seule. Tant que le viewport reste
+   portrait, on pivote le viseur nous-mêmes plutôt que d'attendre un
+   système qui ne le fera pas.
+     width:100vh / height:100vw échangent les dimensions : la boîte, avant
+     rotation, mesure déjà la hauteur de l'écran en large et sa largeur en
+     haut — .scan-live (plus bas) y dessine donc une vraie composition
+     paysage, avec les mêmes calculs que partout ailleurs, sans rien savoir
+     du pivot qui l'affiche. rotate(90deg) la retourne ensuite dans le cadre
+     portrait du téléphone.
+     Sur un appareil qui pivote réellement (verrou désactivé), ce media
+     query ne s'active jamais : orientation:landscape est alors vraie, et
+     .scan-live s'affiche telle quelle, sans double pivot. */
+@media (orientation: portrait) {
+  #scanOverlay.scan-plein {
+    top:50%;left:50%;right:auto;bottom:auto;
+    width:100vh;height:100vw;
+    transform:translate(-50%,-50%) rotate(90deg);
+    transform-origin:center center;
+  }
+}
+
 .scan-intro{font-size:14px;line-height:1.5;margin:0 0 16px;}
 .scan-note{font-size:12px;color:var(--muted);line-height:1.5;margin-top:16px;}
 .scan-cta{
@@ -664,15 +687,6 @@ details.advanced summary{font-size:12.5px;color:var(--accent);cursor:pointer;fon
   position:absolute;top:10px;left:10px;z-index:2;
   width:38px;height:38px;padding:0;border:none;border-radius:50%;
   background:rgba(0,0,0,.45);color:#fff;font-size:17px;line-height:1;cursor:pointer;
-}
-/* Le rappel d'orientation : invisible dès que l'écran est couché. */
-.scan-tourner{display:none;}
-@media (orientation: portrait){
-  .scan-tourner{
-    display:block;position:absolute;top:10px;left:50%;transform:translateX(-50%);
-    margin:0;padding:6px 12px;border-radius:999px;white-space:nowrap;
-    background:rgba(0,0,0,.55);color:#fff;font-size:12.5px;font-weight:700;
-  }
 }
 .scan-viseur video{position:absolute;inset:0;width:100%;height:100%;object-fit:fill;display:block;}
 /* Mêmes fractions que CADRE dans scan.js : 90 % de large, 70 % de haut,

@@ -537,9 +537,6 @@ window.Scan = (function () {
           // il ne doit coûter ni une ligne de hauteur ni un aller-retour.
           '<button type="button" class="scan-fermer" data-action="scan-close" ' +
             'aria-label="Fermer le scan">✕</button>' +
-          // Ne se voit qu'en portrait, et ne masque rien : cet écran se tient
-          // en paysage, autant le dire plutôt que laisser deviner.
-          '<p class="scan-tourner">↻ Tourne ton téléphone</p>' +
         '</div>' +
         '<div class="scan-results">' +
           '<div class="scan-suggestions" id="scanSuggestions"></div>' +
