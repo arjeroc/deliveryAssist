@@ -75,6 +75,28 @@ window.Scan = (function () {
   var viseurMonte = false;
   var rvfcMuet = false;      // annoncé par le navigateur, mais jamais servi
 
+  // Orientation. Trois repères se croisent dans cet écran — le buffer de la
+  // caméra, la boîte affichée, l'œil de l'utilisateur — et tout le scan tient
+  // à ce qu'ils soient réconciliés en un seul endroit : ces deux variables.
+  //
+  //   verrouActif — le système a bien tourné l'écran (plein écran +
+  //                 screen.orientation.lock). Les trois repères se confondent
+  //                 alors, il n'y a plus rien à corriger.
+  //   pivotForce  — le verrou a été refusé et le viewport reste portrait :
+  //                 l'interface se pivote elle-même de ±90° (voir
+  //                 .scan-pivote en CSS). L'image caméra, elle, arrive déjà
+  //                 droite pour l'œil — c'est le pivot qui la couche — d'où
+  //                 la contre-rotation de -pivotForce, appliquée à l'affichage
+  //                 comme à la découpe OCR.
+  var pivotForce = 0;
+  var verrouActif = false;
+
+  // Trace de la dernière lecture, affichée sous les cartes : sur le terrain,
+  // c'est la seule façon de distinguer « le cadre ne montre pas ce qui est lu »
+  // de « le texte est lu mais ne rapproche rien ».
+  var dernierTexteBrut = "";
+  var dernierAngle = null;
+
   var tesseractPret = null;   // promesse de chargement, mise en cache
   var worker = null;
   var moteurEnCharge = false;
@@ -365,13 +387,120 @@ window.Scan = (function () {
     }
   }
 
-  // Le conteneur prend le rapport de l'image : le cadre dessiné en CSS tombe
-  // alors exactement sur la zone découpée pour l'OCR, sans lettre-boîte ni
-  // recadrage implicite du navigateur.
+  // Remise droite de l'image sous le pivot forcé.
+  //
+  // La vidéo tourne à l'envers du pivot (-pivotForce) : son contenu redevient
+  // droit pour l'œil, alors que le reste de l'interface — cadre de visée,
+  // colonne de résultats — reste dans le repère vu, où il est déjà juste.
+  //
+  // La clef, c'est l'échange des dimensions : une rotation ne change pas la
+  // boîte de mise en page, seulement le dessin. Une vidéo laissée à 100 % ×
+  // 100 % puis tournée d'un quart de tour ne couvre plus la boîte, et le cadre
+  // blanc cesse de désigner la zone lue — c'est ce qui a fait échouer les deux
+  // tentatives précédentes de contre-rotation. On lui donne donc, avant
+  // rotation, la hauteur de la boîte pour largeur et sa largeur pour hauteur :
+  // une fois tournée, elle retombe exactement dessus.
+  //
+  // Les dimensions se mesurent sur la boîte réelle plutôt que de se recalculer
+  // depuis le 60/40 : le partage peut changer en CSS sans que ce code mente.
   function ajusterViseur() {
     var cadre = document.getElementById("scanViseur");
-    if (!cadre || !video || !video.videoWidth) return;
-    cadre.style.aspectRatio = video.videoWidth + " / " + video.videoHeight;
+    if (!cadre || !video) return;
+    if (!pivotForce) {
+      video.style.width = "";
+      video.style.height = "";
+      video.style.left = "";
+      video.style.top = "";
+      video.style.right = "";
+      video.style.bottom = "";
+      video.style.transform = "";
+      return;
+    }
+    video.style.width = cadre.clientHeight + "px";
+    video.style.height = cadre.clientWidth + "px";
+    video.style.left = "50%";
+    video.style.top = "50%";
+    video.style.right = "auto";
+    video.style.bottom = "auto";
+    video.style.transform = "translate(-50%,-50%) rotate(" + (-pivotForce) + "deg)";
+  }
+
+  // ---------------------------------------------------------------------
+  // Orientation : le verrou du système d'abord, le pivot forcé en repli
+  // ---------------------------------------------------------------------
+  function estPortrait() {
+    return !!(window.matchMedia && window.matchMedia("(orientation: portrait)").matches);
+  }
+
+  // Le viewport a le dernier mot : s'il est paysage — verrou obtenu, ou
+  // téléphone simplement tourné sans verrou de rotation — aucun pivot n'a lieu
+  // d'être, et la caméra se lit telle quelle.
+  function majPivot() {
+    pivotForce = estPortrait()
+      ? (window.Store.getSettings().scanPivotInverse ? -90 : 90)
+      : 0;
+    if (els.overlay) {
+      els.overlay.classList.toggle("scan-pivote", pivotForce !== 0);
+      els.overlay.style.setProperty("--scan-rotation", pivotForce + "deg");
+    }
+    ajusterViseur();
+    majBrutVue();
+  }
+
+  // La vraie solution, quand le système l'accepte : on demande le plein écran
+  // — Chrome ne concède le verrou qu'à cette condition — puis le paysage.
+  // L'écran bascule pour de bon, le flux caméra suit, et les trois repères se
+  // confondent : plus de contre-rotation, plus de traduction de coordonnées,
+  // plus rien qui puisse se désaligner.
+  //
+  // Tenté seulement si le viewport est portrait : sur un appareil déjà couché,
+  // rien ne justifie de saisir le plein écran. Un refus n'est pas une erreur
+  // — iOS ne connaît pas ce verrou — on rend le plein écran, et le pivot forcé
+  // prend le relais.
+  function verrouillerPaysage() {
+    if (verrouActif || !els.overlay || !estPortrait()) return Promise.resolve(false);
+    var demande = null;
+    try {
+      if (els.overlay.requestFullscreen) {
+        demande = els.overlay.requestFullscreen({ navigationUI: "hide" });
+      }
+    } catch (e) { demande = null; }
+    return Promise.resolve(demande)
+      .catch(function () { return null; })
+      .then(function () {
+        var o = window.screen && window.screen.orientation;
+        if (!o || typeof o.lock !== "function") throw new Error("verrou indisponible");
+        return o.lock("landscape");
+      })
+      .then(function () {
+        // Le scan a pu être fermé pendant que le système se décidait : on ne
+        // laisse pas un écran verrouillé derrière une surcouche déjà rangée.
+        if (!session) { libererOrientation(); return false; }
+        verrouActif = true;
+        return true;
+      }, function () { libererOrientation(); return false; });
+  }
+
+  function libererOrientation() {
+    verrouActif = false;
+    var o = window.screen && window.screen.orientation;
+    if (o && typeof o.unlock === "function") {
+      try { o.unlock(); } catch (e) { /* jamais verrouillé */ }
+    }
+    if (document.fullscreenElement && document.fullscreenElement === els.overlay) {
+      try {
+        var sortie = document.exitFullscreen();
+        if (sortie && sortie.catch) sortie.catch(function () {});
+      } catch (e) { /* déjà sorti */ }
+    }
+  }
+
+  // L'écran a tourné, ou l'utilisateur a quitté le plein écran d'un geste : le
+  // pivot se recalcule, et la vidéo se remesure sur la boîte devenue autre.
+  function surOrientation() {
+    if (!session) return;
+    if (!document.fullscreenElement) verrouActif = false;
+    majPivot();
   }
 
   // ---------------------------------------------------------------------
@@ -421,14 +550,41 @@ window.Scan = (function () {
     programmerBoucle();
   }
 
+  // La zone de lecture, décidée une fois pour toutes : le rectangle dans le
+  // repère du buffer, l'angle qui le remet droit, et ses dimensions telles que
+  // l'utilisateur les voit. Contrôle de netteté et découpe OCR s'en servent
+  // tous deux — ils ne peuvent donc diverger ni l'un de l'autre, ni du cadre
+  // blanc, qui porte les mêmes fractions (voir CADRE et .scan-cadre).
+  function zoneLecture() {
+    var angle = -pivotForce;
+    var r = C.rectCaptureOriente(video.videoWidth, video.videoHeight, angle, CADRE);
+    var droit = angle === 90 || angle === -90;
+    return { rect: r, angle: angle, w: droit ? r.h : r.w, h: droit ? r.w : r.h };
+  }
+
+  // Découpe et remise droite en un seul dessin : le canvas reçoit directement
+  // l'étiquette à l'endroit, à la largeur demandée. Rien ne repasse ensuite par
+  // une seconde rotation — c'est ce qui garde la chaîne lisible, et ce qui
+  // épargne au moteur d'OCR une image pivotée deux fois.
+  function dessinerZone(c, z, largeurCible) {
+    var f = largeurCible / z.w;
+    c.width = Math.max(1, Math.round(z.w * f));
+    c.height = Math.max(1, Math.round(z.h * f));
+    var ctx = c.getContext("2d", { willReadFrequently: true });
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, c.width, c.height);
+    ctx.translate(c.width / 2, c.height / 2);
+    if (z.angle) ctx.rotate((z.angle * Math.PI) / 180);
+    var dw = z.rect.w * f, dh = z.rect.h * f;
+    ctx.drawImage(video, z.rect.x, z.rect.y, z.rect.w, z.rect.h, -dw / 2, -dh / 2, dw, dh);
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    return ctx;
+  }
+
   function mesurerFrame() {
     if (!video || !video.videoWidth) return null;
-    var r = C.rectCapture(video.videoWidth, video.videoHeight, CADRE);
-    var h = Math.max(1, Math.round(ANALYSE_LARGEUR * r.h / r.w));
     var c = canvasAnalyse;
-    if (c.width !== ANALYSE_LARGEUR || c.height !== h) { c.width = ANALYSE_LARGEUR; c.height = h; }
-    var ctx = c.getContext("2d", { willReadFrequently: true });
-    ctx.drawImage(video, r.x, r.y, r.w, r.h, 0, 0, c.width, c.height);
+    var ctx = dessinerZone(c, zoneLecture(), ANALYSE_LARGEUR);
     return C.statsZone(ctx.getImageData(0, 0, c.width, c.height).data, c.width, c.height, 1);
   }
 
@@ -436,19 +592,21 @@ window.Scan = (function () {
   // le temps d'OCR, en soustrayant au moteur tout ce qui n'est pas l'étiquette.
   function capturerZone() {
     if (!video || !video.videoWidth) return null;
-    var r = C.rectCapture(video.videoWidth, video.videoHeight, CADRE);
-    var facteur = 1;
-    if (r.w > LARGEUR_OCR) facteur = LARGEUR_OCR / r.w;
-    else if (r.w < LARGEUR_MIN) facteur = Math.min(2, LARGEUR_MIN / r.w);
-    var c = canvasOCR;
-    c.width = Math.round(r.w * facteur);
-    c.height = Math.round(r.h * facteur);
-    c.getContext("2d").drawImage(video, r.x, r.y, r.w, r.h, 0, 0, c.width, c.height);
-    return accentuer(c);
+    var z = zoneLecture();
+    var cible = z.w;
+    if (cible > LARGEUR_OCR) cible = LARGEUR_OCR;
+    else if (cible < LARGEUR_MIN) cible = Math.min(z.w * 2, LARGEUR_MIN);
+    dessinerZone(canvasOCR, z, Math.round(cible));
+    return accentuer(canvasOCR);
   }
 
   function reconnaitreVideo(angles) {
-    return lireAngles(capturerZone(), angles);
+    return lireAngles(capturerZone(), angles).then(function (res) {
+      dernierTexteBrut = (res && res.texte) || "";
+      dernierAngle = res ? res.angle : null;
+      majBrutVue();
+      return res;
+    });
   }
 
   // ---------------------------------------------------------------------
@@ -528,14 +686,16 @@ window.Scan = (function () {
   // Le viseur se monte une fois et ne se démonte plus tant qu'on scanne :
   // réécrire le conteneur à chaque lecture arracherait la vidéo de la page.
   function monterViseur() {
+    majPivot();
     els.body.innerHTML =
       '<div class="scan-live">' +
         '<div class="scan-viseur" id="scanViseur">' +
-          // Vidéo et cadre restent de simples frères : un seul pivot pour
-          // tout .scan-viseur (voir CSS, pivot forcé), jamais deux — la
-          // contre-rotation tentée sur la vidéo seule les a désalignés une
-          // fois (le cadre ne montrait plus ce qui était lu, plus aucun
-          // résultat), pas de raison de reproduire ce risque ailleurs.
+          // Le cadre de visée ne tourne jamais : il vit dans le repère de
+          // l'œil, celui de la boîte, où « large » veut dire large. Seule la
+          // vidéo porte une contre-rotation, et avec ses dimensions échangées
+          // pour retomber pile sur la boîte (voir ajusterViseur) — c'est ce
+          // qui manquait aux deux tentatives précédentes, où le cadre suivait
+          // la vidéo et finissait par désigner autre chose que la zone lue.
           '<div class="scan-cadre" aria-hidden="true"></div>' +
           '<div class="scan-hint" id="scanHint"></div>' +
           // Le ✕ du bandeau, rendu à l'image : c'est le seul geste de sortie,
@@ -545,6 +705,7 @@ window.Scan = (function () {
         '</div>' +
         '<div class="scan-results">' +
           '<div class="scan-suggestions" id="scanSuggestions"></div>' +
+          '<div id="scanBrut"></div>' +
           '<button type="button" class="scan-lien" data-action="scan-photo">' +
             '📷 Prendre une photo à la place</button>' +
         '</div>' +
@@ -553,6 +714,7 @@ window.Scan = (function () {
     cadre.insertBefore(assurerVideo(), cadre.firstChild);
     viseurMonte = true;
     ajusterViseur();
+    majBrutVue();
   }
 
   // Le passage scanning ↔ recognizing survient une fois par seconde : il ne
@@ -581,6 +743,25 @@ window.Scan = (function () {
     box.innerHTML = candidats.length
       ? candidatsHTML(candidats)
       : '<p class="scan-attente">Les adresses possibles s\'afficheront ici.</p>';
+  }
+
+  // Ce que la caméra a réellement livré au moteur, et dans quel repère. Un
+  // viseur muet ne dit pas s'il ne lit rien ou s'il lit à côté ; ces deux
+  // lignes le disent, et évitent de deviner à distance.
+  function majBrutVue() {
+    var box = document.getElementById("scanBrut");
+    if (!box) return;
+    var repere = verrouActif
+      ? "écran verrouillé en paysage"
+      : (pivotForce ? "pivot forcé " + pivotForce + "°, image redressée de " +
+          (-pivotForce) + "°" : "paysage natif");
+    var flux = (video && video.videoWidth)
+      ? video.videoWidth + "×" + video.videoHeight
+      : "flux non démarré";
+    box.innerHTML = '<details class="scan-brut"><summary>Ce que lit l\'appareil</summary>' +
+      '<pre>' + escapeHtml(flux + " · " + repere +
+        (dernierAngle === null ? "" : " · angle OCR " + dernierAngle + "°") +
+        "\n\n" + (dernierTexteBrut.trim() || "(rien lu)")) + '</pre></details>';
   }
 
   function adresseCarteHTML(row) {
@@ -782,28 +963,43 @@ window.Scan = (function () {
     els.body = document.getElementById("scanBody");
     els.titre = els.overlay.querySelector(".topbar h1");
     els.overlay.classList.add("open");
-    // Lu une fois à l'ouverture, comme l'intervalle OCR : le pivot forcé
-    // (voir --scan-rotation en CSS) et sa contre-rotation sur la vidéo s'en
-    // servent tant que le viewport reste portrait.
-    els.overlay.style.setProperty("--scan-rotation",
-      window.Store.getSettings().scanPivotInverse ? "-90deg" : "90deg");
     viseurMonte = false;
+    dernierTexteBrut = "";
+    dernierAngle = null;
 
     session = creerSession();
     document.addEventListener("visibilitychange", surVisibilite);
+    window.addEventListener("orientationchange", surOrientation);
+    window.addEventListener("resize", surOrientation);
+    document.addEventListener("fullscreenchange", surOrientation);
 
-    if (C.videoDisponible(navigator, window.isSecureContext)) session.demarrer();
-    else session.modePhoto();
+    if (!C.videoDisponible(navigator, window.isSecureContext)) { session.modePhoto(); return; }
+
+    // Le plein écran exige le geste qui vient de nous amener ici : la demande
+    // part donc maintenant, sans rien attendre. La caméra ne s'ouvre qu'après,
+    // pour que le flux naisse dans l'orientation définitive plutôt que d'avoir
+    // à s'y rattraper.
+    verrouillerPaysage().then(function () {
+      if (!session) return;
+      majPivot();
+      session.demarrer();
+    });
   }
 
   // Disponible dans tous les états : caméra rendue, lecture périmée, worker
   // libéré, surcouche fermée — et rien d'écrit qui n'ait été validé.
   function close() {
     document.removeEventListener("visibilitychange", surVisibilite);
+    window.removeEventListener("orientationchange", surOrientation);
+    window.removeEventListener("resize", surOrientation);
+    document.removeEventListener("fullscreenchange", surOrientation);
+    libererOrientation();
     if (session) session.fermer();
     libererCamera();
     libererWorker();
     session = null;
+    pivotForce = 0;
+    if (els.overlay) els.overlay.classList.remove("scan-pivote");
     definirPleinEcran(false);
     if (els.body) els.body.innerHTML = "";
     viseurMonte = false;

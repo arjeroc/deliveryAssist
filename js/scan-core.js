@@ -213,6 +213,31 @@ window.ScanCore = (function () {
     };
   }
 
+  // Le même rectangle, mais quand l'image affichée n'est pas l'image du
+  // capteur. C'est le cas du repli « pivot forcé » : écran verrouillé en
+  // portrait, téléphone tenu couché, le navigateur livre donc un buffer
+  // portrait où l'étiquette gît sur le flanc, et l'interface le redresse
+  // d'un quart de tour pour l'œil.
+  //
+  //   rotation — l'angle qu'il faut faire subir au buffer pour obtenir ce
+  //              que l'utilisateur voit : 0, 90 ou -90 (270 accepté).
+  //
+  // Le cadrage se calcule dans le repère vu — c'est là que « large » veut
+  // dire quelque chose, et c'est là que le cadre blanc est dessiné — puis se
+  // ramène en coordonnées du buffer, seul repère que sait lire un drawImage.
+  // Sans cette traduction, une découpe « 90 % de large » prise sur un buffer
+  // portrait désigne une bande verticale : le cadre visé et la zone lue ne
+  // parlent plus de la même chose, et plus rien n'est reconnu.
+  function rectCaptureOriente(largeur, hauteur, rotation, opts) {
+    var a = ((((rotation || 0) % 360) + 360) % 360);
+    if (a !== 90 && a !== 270) return rectCapture(largeur, hauteur, opts);
+    // Vu de l'utilisateur, les deux axes sont échangés.
+    var r = rectCapture(hauteur, largeur, opts);
+    return (a === 90)
+      ? { x: r.y, y: hauteur - r.x - r.w, w: r.h, h: r.w }
+      : { x: largeur - r.y - r.h, y: r.x, w: r.h, h: r.w };
+  }
+
   // Stratégie d'orientation. En photo, le cliché est unique : on peut se payer
   // les quatre angles, comme avant. En vidéo, une image par seconde — les
   // essayer tous quadruplerait le temps de lecture alors que l'étiquette est
@@ -580,6 +605,7 @@ window.ScanCore = (function () {
     ecartEmpreinte: ecartEmpreinte,
     qualiteFrame: qualiteFrame,
     rectCapture: rectCapture,
+    rectCaptureOriente: rectCaptureOriente,
     anglesAEssayer: anglesAEssayer,
     doitRemplacer: doitRemplacer,
     ecartFaible: ecartFaible,

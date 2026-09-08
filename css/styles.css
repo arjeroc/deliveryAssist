@@ -596,30 +596,36 @@ details.advanced summary{font-size:12.5px;color:var(--accent);cursor:pointer;fon
 #scanOverlay.scan-plein .topbar{display:none;}
 #scanOverlay.scan-plein #scanBody{padding:0;max-width:none;overflow:hidden;}
 
-/* Le pivot forcé : sur le terrain, tourner le téléphone ne suffit pas
-   toujours — verrou de rotation activé, ou navigateur qui refuse de
-   retourner l'écran pour une page seule. Tant que le viewport reste
-   portrait, on pivote le viseur nous-mêmes plutôt que d'attendre un
-   système qui ne le fera pas.
+/* Le plein écran du système, quand il est accordé : scan.js demande
+   requestFullscreen puis screen.orientation.lock('landscape'). L'écran
+   bascule alors pour de bon, le flux caméra suit, et il n'y a plus aucun
+   repère à réconcilier — c'est le chemin normal sur Android. La transition
+   d'ouverture se retire ici : un élément plein écran qui porte un transform
+   se compose mal, et il n'a plus rien à faire glisser. */
+#scanOverlay:fullscreen{transform:none;background:var(--bg);}
+
+/* Le pivot forcé, en repli : le verrou a été refusé (iOS ne le connaît pas)
+   et le viewport reste portrait alors que le téléphone est tenu couché. On
+   pivote le viseur nous-mêmes plutôt que d'attendre un système qui ne le
+   fera pas.
      width:100vh / height:100vw échangent les dimensions : la boîte, avant
      rotation, mesure déjà la hauteur de l'écran en large et sa largeur en
      haut — .scan-live (plus bas) y dessine donc une vraie composition
      paysage, avec les mêmes calculs que partout ailleurs, sans rien savoir
-     du pivot qui l'affiche. rotate(var(--scan-rotation)) la retourne ensuite
-     dans le cadre portrait du téléphone.
-     --scan-rotation vaut 90deg par défaut, posé en inline par scan.js à
-     l'ouverture depuis le réglage « Sens de rotation du viseur » (les deux
-     sens ne se valent pas selon les appareils, essais faits sur le terrain).
-     Sur un appareil qui pivote réellement (verrou désactivé), ce media
-     query ne s'active jamais : orientation:landscape est alors vraie, et
-     .scan-live s'affiche telle quelle, sans double pivot. */
-@media (orientation: portrait) {
-  #scanOverlay.scan-plein {
-    top:50%;left:50%;right:auto;bottom:auto;
-    width:100vh;height:100vw;
-    transform:translate(-50%,-50%) rotate(var(--scan-rotation, 90deg));
-    transform-origin:center center;
-  }
+     du pivot qui l'affiche. Ce repère avant rotation est celui de l'œil :
+     tout ce qui s'y dessine large est vu large, cadre de visée compris.
+     rotate(var(--scan-rotation)) le retourne ensuite dans le cadre portrait
+     du téléphone.
+     La classe .scan-pivote et --scan-rotation sont toutes deux posées par
+     scan.js (voir majPivot), depuis le même matchMedia et le même réglage
+     « Sens de rotation du viseur » que la contre-rotation de la vidéo et la
+     découpe OCR : une seule décision d'orientation, jamais une media query
+     d'un côté et un calcul de l'autre — ils finiraient par se contredire. */
+#scanOverlay.scan-plein.scan-pivote {
+  top:50%;left:50%;right:auto;bottom:auto;
+  width:100vh;height:100vw;
+  transform:translate(-50%,-50%) rotate(var(--scan-rotation, 90deg));
+  transform-origin:center center;
 }
 
 .scan-intro{font-size:14px;line-height:1.5;margin:0 0 16px;}
@@ -674,11 +680,10 @@ details.advanced summary{font-size:12.5px;color:var(--accent);cursor:pointer;fon
 /* Pas de gap : 60 et 40 doivent tomber juste sur la largeur de l'écran.
    La séparation, c'est le bord de la colonne de résultats qui la dit. */
 .scan-live{display:flex;flex-direction:row;height:100%;min-height:0;}
-/* Le conteneur reçoit en JS le rapport exact de l'image, et la vidéo le
-   remplit sans recadrage (fill) : le cadre dessiné ci-dessous tombe alors au
-   pixel près sur la zone découpée pour l'OCR — quelle que soit la taille de
-   la boîte, puisque .scan-cadre et la capture OCR partagent les mêmes
-   fractions (voir CADRE dans scan.js), indépendamment de l'étirement. */
+/* La vidéo remplit la boîte sans recadrage (fill), et le cadre dessiné
+   ci-dessous tombe donc au pixel près sur la zone découpée pour l'OCR :
+   .scan-cadre et la capture partagent les mêmes fractions (voir CADRE dans
+   scan.js), et une fraction survit à l'étirement comme à la rotation. */
 /* 60 % de la largeur de l'écran, toute sa hauteur, bord à bord : c'est la
    surface de lecture, elle ne se rogne d'aucun côté. */
 .scan-viseur{
@@ -691,20 +696,21 @@ details.advanced summary{font-size:12.5px;color:var(--accent);cursor:pointer;fon
   width:38px;height:38px;padding:0;border:none;border-radius:50%;
   background:rgba(0,0,0,.45);color:#fff;font-size:17px;line-height:1;cursor:pointer;
 }
-/* Vidéo et cadre restent de simples enfants de .scan-viseur, sans pivot
-   propre : un seul rectangle tourne pour les deux (voir le pivot forcé
-   plus haut), ils ne peuvent donc jamais se désaligner l'un de l'autre —
-   ce qui s'est produit quand la vidéo seule portait une contre-rotation. */
+/* Sous le pivot forcé, la vidéo — et elle seule — reçoit en JS une
+   contre-rotation et des dimensions échangées (voir ajusterViseur) : le
+   contenu de l'image redevient droit pour l'œil, et la boîte reste
+   exactement couverte. Le cadre de visée, lui, ne bouge pas : il appartient
+   au repère de l'œil, pas à celui du capteur.
+   object-fit:fill plutôt que cover : la vidéo remplit la boîte sans recadrage
+   implicite, donc les fractions du cadre dessiné sont exactement celles de la
+   découpe OCR (voir CADRE dans scan.js), quel que soit l'étirement. */
 .scan-viseur video{position:absolute;inset:0;width:100%;height:100%;object-fit:fill;display:block;}
 /* Mêmes fractions que CADRE dans scan.js : 90 % de large, 70 % de haut,
    centré — un rectangle large, pour une adresse lue à l'horizontale plutôt
    qu'un cadre carré qui la compresserait. La marge de sécurité de la
    capture déborde de ce trait, exprès.
-   Une fois le pivot forcé actif (voir plus haut) et le téléphone encore
-   debout, ce rectangle s'affiche donc temporairement plus haut que large
-   à l'écran — c'est la même géométrie que .scan-viseur lui-même (voir son
-   propre commentaire), pas une erreur : tourner le téléphone lui rend sa
-   vraie forme, large. */
+   Il reste large dans tous les cas : en paysage natif comme sous le pivot
+   forcé, il est dessiné dans le repère de l'œil, celui d'avant rotation. */
 .scan-cadre{
   position:absolute;left:5%;top:15%;width:90%;height:70%;
   border:2px solid rgba(255,255,255,.95);border-radius:10px;

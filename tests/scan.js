@@ -160,6 +160,35 @@ async function suite() {
     const b = C.rectCapture(600, 400, { partLargeur: 1, partHauteur: 1, marge: 0.5 });
     verifie("jamais plus grand que l'image", b, { x: 0, y: 0, w: 600, h: 400 });
 
+    // Le repli « pivot forcé » : buffer portrait, image redressée d'un quart
+    // de tour pour l'œil. Le cadrage doit se raisonner dans le repère vu —
+    // large veut dire large — puis revenir en coordonnées du buffer. Sans
+    // cette traduction, « 90 % de large » désigne une bande verticale et le
+    // cadre blanc cesse de montrer ce qui est lu : c'est la régression qui a
+    // rendu le scan muet.
+    {
+      const opts = { partLargeur: 0.90, partHauteur: 0.70, marge: 0 };
+      const droit = C.rectCaptureOriente(1000, 500, 0, opts);
+      verifie("sans rotation, rien ne change",
+        droit, C.rectCapture(1000, 500, opts));
+
+      // Buffer 720×1280 (portrait), vu 1280×720 (paysage) : la découpe vue
+      // fait 1152×504, donc 504 de large et 1152 de haut dans le buffer.
+      const q = C.rectCaptureOriente(720, 1280, -90, opts);
+      verifie("un quart de tour échange les axes",
+        { w: q.w, h: q.h }, { w: 504, h: 1152 });
+      verifie("et reste dans l'image",
+        q.x >= 0 && q.y >= 0 && q.x + q.w <= 720 && q.y + q.h <= 1280, true);
+      verifie("découpe centrée après traduction",
+        { x: q.x, y: q.y }, { x: 108, y: 64 });
+
+      // L'autre sens vise la même zone : seule l'orientation du contenu
+      // change, jamais la région du capteur qui est lue.
+      const inv = C.rectCaptureOriente(720, 1280, 90, opts);
+      verifie("les deux sens lisent la même région", inv, q);
+      verifie("270 vaut -90", C.rectCaptureOriente(720, 1280, 270, opts), q);
+    }
+
     verifie("photo : les quatre angles", C.anglesAEssayer("photo"), [0, 90, 270, 180]);
     verifie("vidéo : l'orientation retenue seule", C.anglesAEssayer("video", 0, 0), [0]);
     verifie("vidéo : un angle de secours après un échec", C.anglesAEssayer("video", 0, 1), [0, 90]);
