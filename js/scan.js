@@ -777,6 +777,11 @@ window.Scan = (function () {
     els.body = document.getElementById("scanBody");
     els.titre = els.overlay.querySelector(".topbar h1");
     els.overlay.classList.add("open");
+    // Lu une fois à l'ouverture, comme l'intervalle OCR : le pivot forcé
+    // (voir --scan-rotation en CSS) et sa contre-rotation sur la vidéo s'en
+    // servent tant que le viewport reste portrait.
+    els.overlay.style.setProperty("--scan-rotation",
+      window.Store.getSettings().scanPivotInverse ? "-90deg" : "90deg");
     viseurMonte = false;
 
     session = creerSession();

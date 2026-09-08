@@ -51,6 +51,10 @@ window.Store = (function () {
       // réactive ; la cadence (scan-core.js) empêche de toute façon deux
       // lectures de se chevaucher.
       scanIntervalleMs: 700,
+      // Sens du pivot forcé quand le téléphone reste portrait (verrou de
+      // rotation) : les deux sens ne se valent pas selon l'appareil et le
+      // navigateur, d'où le réglage plutôt qu'un choix figé dans le code.
+      scanPivotInverse: false,
       // Flèches de sens sur la trace : actives par défaut. C'est le seul
       // élément que la carte des Données pose par-dessus le trait, et il dit la
       // seule chose qu'un trait ne sait pas dire — dans quel sens on le suit.

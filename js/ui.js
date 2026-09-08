@@ -3111,6 +3111,7 @@ window.UI = (function () {
             (s.scanIntervalleMs || 700) + '</span>&nbsp;ms entre deux lectures)</label>' +
           '<input type="range" id="admScanIntervalle" min="400" max="1500" step="50" value="' + (s.scanIntervalleMs || 700) + '">' +
         '</div>' +
+        '<label class="switch-row"><input type="checkbox" id="admScanPivot" ' + (s.scanPivotInverse ? "checked" : "") + '> Inverser le sens de rotation de l\'écran de scan (téléphone verrouillé en portrait)</label>' +
         '<label class="switch-row"><input type="checkbox" id="admFleches" ' + (s.flechesSens !== false ? "checked" : "") + '> Flèches de sens sur la trace (au zoom rapproché)</label>' +
         '<label class="switch-row"><input type="checkbox" id="admMulti" ' + (multi ? "checked" : "") + '> Gérer plusieurs fichiers de tournée (empilement)</label>' +
         '<div class="toolbar">' +
@@ -3215,6 +3216,9 @@ window.UI = (function () {
     });
     document.getElementById("admScanIntervalle").addEventListener("change", function (e) {
       S.setSetting("scanIntervalleMs", Number(e.target.value));
+    });
+    document.getElementById("admScanPivot").addEventListener("change", function (e) {
+      S.setSetting("scanPivotInverse", e.target.checked);
     });
     document.getElementById("admFleches").addEventListener("change", function (e) {
       S.setSetting("flechesSens", e.target.checked);

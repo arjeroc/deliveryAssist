@@ -605,8 +605,11 @@ details.advanced summary{font-size:12.5px;color:var(--accent);cursor:pointer;fon
      rotation, mesure déjà la hauteur de l'écran en large et sa largeur en
      haut — .scan-live (plus bas) y dessine donc une vraie composition
      paysage, avec les mêmes calculs que partout ailleurs, sans rien savoir
-     du pivot qui l'affiche. rotate(90deg) la retourne ensuite dans le cadre
-     portrait du téléphone.
+     du pivot qui l'affiche. rotate(var(--scan-rotation)) la retourne ensuite
+     dans le cadre portrait du téléphone.
+     --scan-rotation vaut 90deg par défaut, posé en inline par scan.js à
+     l'ouverture depuis le réglage « Sens de rotation du viseur » (les deux
+     sens ne se valent pas selon les appareils, essais faits sur le terrain).
      Sur un appareil qui pivote réellement (verrou désactivé), ce media
      query ne s'active jamais : orientation:landscape est alors vraie, et
      .scan-live s'affiche telle quelle, sans double pivot. */
@@ -614,8 +617,22 @@ details.advanced summary{font-size:12.5px;color:var(--accent);cursor:pointer;fon
   #scanOverlay.scan-plein {
     top:50%;left:50%;right:auto;bottom:auto;
     width:100vh;height:100vw;
-    transform:translate(-50%,-50%) rotate(90deg);
+    transform:translate(-50%,-50%) rotate(var(--scan-rotation, 90deg));
     transform-origin:center center;
+  }
+  /* Le flux caméra brut n'a pas besoin qu'on le tourne — l'appareil s'en
+     charge déjà à sa manière, propre à chaque téléphone/navigateur — et le
+     pivot d'ensemble ci-dessus le fait tourner une seconde fois pour rien,
+     d'où un rendu caméra bizarre une fois sur le terrain. La vidéo porte
+     donc la rotation inverse (même angle, signe opposé), avec ses propres
+     dimensions échangées pour continuer à remplir .scan-viseur (60vh de
+     large, 100vw de haut : voir .scan-viseur juste au-dessus) après ce
+     second pivot. Seul ce qui est dessiné par-dessus — cadre, ✕, résultats —
+     garde le pivot d'ensemble ; eux sont de simples pixels d'interface, sans
+     idée propre de leur orientation. */
+  #scanOverlay.scan-plein .scan-viseur video{
+    top:50%;left:50%;right:auto;bottom:auto;width:100vw;height:60vh;
+    transform:translate(-50%,-50%) rotate(calc(var(--scan-rotation, 90deg) * -1));
   }
 }
 
