@@ -645,10 +645,11 @@ details.advanced summary{font-size:12.5px;color:var(--accent);cursor:pointer;fon
   border-radius:14px;overflow:hidden;margin-bottom:10px;
 }
 .scan-viseur video{position:absolute;inset:0;width:100%;height:100%;object-fit:fill;display:block;}
-/* Mêmes fractions que CADRE dans scan.js : 86 % de large, 46 % de haut,
-   centré. La marge de sécurité de la capture déborde de ce trait, exprès. */
+/* Mêmes fractions que CADRE dans scan.js : 86 % de large, 86 % de haut,
+   centré — quasi carré. La marge de sécurité de la capture déborde de ce
+   trait, exprès. */
 .scan-cadre{
-  position:absolute;left:7%;top:27%;width:86%;height:46%;
+  position:absolute;left:7%;top:7%;width:86%;height:86%;
   border:2px solid rgba(255,255,255,.95);border-radius:10px;
   box-shadow:0 0 0 100vmax rgba(0,0,0,.38);
 }

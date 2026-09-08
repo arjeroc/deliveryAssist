@@ -41,7 +41,10 @@ window.Scan = (function () {
   // Cadre de capture, en fraction de l'image. Ces trois nombres sont aussi
   // ceux du cadre dessiné en CSS (.scan-cadre) : la marge, elle, déborde
   // volontairement du trait visible, pour rattraper un nom écrit de travers.
-  var CADRE = { partLargeur: 0.86, partHauteur: 0.46, marge: 0.12 };
+  // Largeur et hauteur égales : un cadre quasi carré, plutôt qu'une fente
+  // horizontale, laisse toute son adresse à une étiquette lue à la verticale
+  // comme à l'horizontale, sans la compresser.
+  var CADRE = { partLargeur: 0.86, partHauteur: 0.86, marge: 0.12 };
 
   var INTERVALLE_OCR_DEFAUT = 700; // ms entre deux lectures, jamais par image
   var INTERVALLE_OCR_MIN = 400;    // en dessous, la caméra peine à fournir une image neuve
