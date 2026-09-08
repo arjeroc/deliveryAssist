@@ -516,7 +516,7 @@ window.Scan = (function () {
   }
 
   function afficherTravail(message) {
-    definirCorpsPlein(false);
+    definirPleinEcran(false);
     els.body.innerHTML =
       '<div class="scan-travail">' +
         '<div class="scan-spinner"></div>' +
@@ -533,6 +533,13 @@ window.Scan = (function () {
         '<div class="scan-viseur" id="scanViseur">' +
           '<div class="scan-cadre" aria-hidden="true"></div>' +
           '<div class="scan-hint" id="scanHint"></div>' +
+          // Le ✕ du bandeau, rendu à l'image : c'est le seul geste de sortie,
+          // il ne doit coûter ni une ligne de hauteur ni un aller-retour.
+          '<button type="button" class="scan-fermer" data-action="scan-close" ' +
+            'aria-label="Fermer le scan">✕</button>' +
+          // Ne se voit qu'en portrait, et ne masque rien : cet écran se tient
+          // en paysage, autant le dire plutôt que laisser deviner.
+          '<p class="scan-tourner">↻ Tourne ton téléphone</p>' +
         '</div>' +
         '<div class="scan-results">' +
           '<div class="scan-suggestions" id="scanSuggestions"></div>' +
@@ -674,13 +681,14 @@ window.Scan = (function () {
       '<button type="button" class="scan-lien" data-action="scan-photo">📷 Prendre une photo</button>';
   }
 
-  // Le viseur réclame tout l'écran — sans le padding ni la colonne à 760px
-  // qui conviennent aux autres écrans (attribution, photo, erreur) — pour
-  // que 60/40 se lise sur la largeur réelle de l'appareil, pas sur une
-  // colonne déjà réduite. Seul ce panneau porte la classe ; elle retombe
-  // partout ailleurs.
-  function definirCorpsPlein(actif) {
-    if (els.body) els.body.classList.toggle("scan-plein", !!actif);
+  // Le viseur prend l'écran entier : ni bandeau de titre, ni marge, ni
+  // colonne à 760px. Ce bandeau vert en travers du haut est une habitude de
+  // portrait — en paysage il mange un sixième de la hauteur, celle-là même
+  // qui manque à la capture. Il s'efface donc, et le ✕ passe en pastille sur
+  // l'image (voir monterViseur). Les autres écrans — attribution, photo,
+  // erreur — le retrouvent tel quel.
+  function definirPleinEcran(actif) {
+    if (els.overlay) els.overlay.classList.toggle("scan-plein", !!actif);
   }
 
   // Un seul aiguillage de rendu, appelé à chaque changement d'état : l'écran
@@ -689,7 +697,7 @@ window.Scan = (function () {
     if (!els.body) return;
     var etat = session.etat();
     titrer(etat === C.ETATS.ATTRIBUTION ? "Attribuer les objets" : "Scanner une étiquette");
-    definirCorpsPlein(etat === C.ETATS.DEMARRAGE || etat === C.ETATS.VISEUR || etat === C.ETATS.LECTURE);
+    definirPleinEcran(etat === C.ETATS.DEMARRAGE || etat === C.ETATS.VISEUR || etat === C.ETATS.LECTURE);
     switch (etat) {
       case C.ETATS.DEMARRAGE:
       case C.ETATS.VISEUR:
@@ -789,7 +797,7 @@ window.Scan = (function () {
     libererCamera();
     libererWorker();
     session = null;
-    definirCorpsPlein(false);
+    definirPleinEcran(false);
     if (els.body) els.body.innerHTML = "";
     viseurMonte = false;
     titrer("Scanner une étiquette");
