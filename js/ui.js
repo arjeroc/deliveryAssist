@@ -2202,6 +2202,25 @@ window.UI = (function () {
       return '<li><strong>' + escapeHtml([o.row.numero, o.row.rue].filter(Boolean).join(" ")) + '</strong> — ' + escapeHtml(o.row.notes) + '</li>';
     }
 
+    // Mini-résumé des motifs de non-distribution, en proportion du total : ce
+    // que le détail ligne à ligne, plus bas, n'offre pas d'un coup d'œil.
+    function motifResumeHTML(nonDistributions) {
+      var total = nonDistributions.length;
+      var comptes = {}, ordre = [];
+      nonDistributions.forEach(function (x) {
+        var key = x.entry.motif || "autre";
+        if (comptes[key] === undefined) { comptes[key] = 0; ordre.push(key); }
+        comptes[key]++;
+      });
+      ordre.sort(function (a, b) { return comptes[b] - comptes[a]; });
+      return '<div class="motif-resume">' + ordre.map(function (key) {
+        var n = comptes[key];
+        var pct = total ? Math.round((n / total) * 100) : 0;
+        return '<span class="motif-resume-item">' + escapeHtml(Prep.motifLabel(key) || "Autre") +
+          ' — ' + pct + ' % (' + n + ')</span>';
+      }).join("") + '</div>';
+    }
+
     // Le rapport ne cite que les notes nouvelles ou modifiées depuis le
     // dernier rapport : celles déjà lues à cette occasion n'ont rien à
     // apprendre à qui relit le suivi d'une tournée récurrente.
@@ -2211,12 +2230,17 @@ window.UI = (function () {
       return '<tr><td>' + c.icon + ' ' + escapeHtml(c.label) + '</td><td>' + c.total + '</td><td>' + c.distribue + '</td><td>' + c.abandonne + '</td><td>' + c.restant + '</td></tr>';
     }).join("");
 
+    // Un fichier par tournée empilée : la source de vérité de ce qui a été
+    // livré ce jour-là, au-delà du seul id_tournee courant.
+    var fichiersTxt = S.getFichiers().map(function (f) { return escapeHtml(f.id); }).join(", ") || "—";
+
     return '<!doctype html><html lang="fr"><head><meta charset="UTF-8">' +
-      '<title>Rapport de tournée ' + escapeHtml(ctx.idTournee) + ' — ' + escapeHtml(dateTournee) + '</title>' +
+      '<title>Rapport de distribution courrier-colis — ' + escapeHtml(dateTournee) + '</title>' +
       '<style>' +
         'body{font-family:-apple-system,"Segoe UI",Roboto,Arial,sans-serif;max-width:760px;margin:24px auto;padding:0 16px 40px;color:#1c1e1b;background:#f4f5f3;}' +
         'h1{font-size:20px;margin-bottom:4px;} h2{font-size:15px;margin:28px 0 10px;border-bottom:2px solid #2f6b4f;padding-bottom:4px;}' +
-        '.entete{color:#6b7268;font-size:13.5px;margin-bottom:20px;}' +
+        '.entete{color:#6b7268;font-size:13.5px;margin-bottom:6px;}' +
+        '.entete-fichiers{color:#6b7268;font-size:13.5px;margin-bottom:20px;}' +
         'table{width:100%;border-collapse:collapse;font-size:13px;background:#fff;}' +
         'th,td{text-align:left;padding:7px 8px;border-bottom:1px solid #dfe2dc;}' +
         'th{color:#6b7268;font-weight:700;font-size:11.5px;text-transform:uppercase;}' +
@@ -2225,27 +2249,31 @@ window.UI = (function () {
         '.kpi b{display:block;font-size:20px;} .kpi span{font-size:11.5px;color:#6b7268;}' +
         '.non-distrib{background:#fdeceb;border:1px solid #eec5c0;border-radius:10px;padding:4px 12px;}' +
         '.non-distrib table{background:transparent;}' +
+        '.motif-resume{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0;}' +
+        '.motif-resume-item{background:#fff;border:1px solid #eec5c0;border-radius:20px;padding:4px 10px;font-size:12.5px;}' +
         'ul{padding-left:18px;font-size:13px;}' +
         '.muted{color:#6b7268;}' +
       '</style></head><body>' +
-      '<h1>Rapport de fin de tournée « ' + escapeHtml(ctx.idTournee) + ' »</h1>' +
+      '<h1>Rapport de distribution courrier-colis</h1>' +
       '<div class="entete">' + escapeHtml(dateTournee) + ' · Début ' + debutTxt + ' · Fin ' + finTxt + ' · Durée ' + dureeTxt + '</div>' +
+      '<div class="entete-fichiers">Tournées chargées : <strong>' + fichiersTxt + '</strong></div>' +
       '<h2>Résumé</h2>' +
       '<div class="kpis">' +
+        '<div class="kpi"><b>' + bilan.pct + ' %</b><span>Progression finale</span></div>' +
         '<div class="kpi"><b>' + bilan.total + '</b><span>Total éléments</span></div>' +
         '<div class="kpi"><b>' + bilan.distribuees + '</b><span>Distribués</span></div>' +
         '<div class="kpi"><b>' + bilan.abandonnees + '</b><span>Non distribués</span></div>' +
-        '<div class="kpi"><b>' + bilan.pct + ' %</b><span>Progression finale</span></div>' +
-        '<div class="kpi"><b>' + bilan.zones + '</b><span>Zones parcourues</span></div>' +
       '</div>' +
       '<table><thead><tr><th>Catégorie</th><th>Total</th><th>Distribués</th><th>Non distribués</th><th>Restants</th></tr></thead><tbody>' +
         categoriesLignes +
       '</tbody></table>' +
       '<h2>Non-distributions' + (bilan.nonDistributions.length ? "" : " — aucune") + '</h2>' +
       (bilan.nonDistributions.length
-        ? '<div class="non-distrib"><table><thead><tr><th>Type</th><th>Destinataire</th><th>Adresse</th><th>Raison</th><th>Note</th><th>Heure</th></tr></thead><tbody>' +
-            bilan.nonDistributions.map(ligneNonDistrib).join("") +
-          '</tbody></table></div>'
+        ? '<div class="non-distrib">' +
+            motifResumeHTML(bilan.nonDistributions) +
+            '<table><thead><tr><th>Type</th><th>Destinataire</th><th>Adresse</th><th>Raison</th><th>Note</th><th>Heure</th></tr></thead><tbody>' +
+              bilan.nonDistributions.map(ligneNonDistrib).join("") +
+            '</tbody></table></div>'
         : '<p class="muted">Toutes les distributions ont abouti.</p>') +
       '<h2>Observations' + (notesNouvelles.length ? "" : " — aucune") + '</h2>' +
       (notesNouvelles.length
