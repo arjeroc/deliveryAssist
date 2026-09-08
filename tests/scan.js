@@ -510,6 +510,10 @@ function rapprochementTests() {
     ligne("a3", "DUPONT", "7", "AVENUE DE LA GARE"),
     ligne("a4", "DUPONT", "9", "RUE DES ROSIERS"),
     ligne("a5", "ROY", "3", "PLACE DU MARCHE"),
+    // Étiquettes terrain : une impression nette et une étiquette à fenêtre,
+    // dont l'OCR peut confondre O/0, I/1 ou perdre un caractère.
+    ligne("a6", "HILAIRE COURTOIS", "1", "ROUTE DE CHEZ FOUR"),
+    ligne("a7", "FARGEOT HELENE", "", "LIEU DIT LES PRADELIERES"),
   ].join("\n"));
 
   const ids = (texte) => S.matchTexteLibre(texte, 5).map((c) => c.row.id);
@@ -527,6 +531,10 @@ function rapprochementTests() {
     ids("DUPONT\n7 AVENUE DE LA GARE")[0], "a3");
   verifie("l'adresse sans nom fonctionne toujours",
     ids("12 RUE DES ROSIERS\n16000 ANGOULEME")[0], "a1");
+  verifie("étiquette terrain nette : le bloc destinataire suffit",
+    ids("M HILAIRE C0URT0IS\nCHEZ FRANCILLOU\n1 ROUTE DE CHEZ FOUR\n16260 CELLEFROUIN")[0], "a6");
+  verifie("étiquette terrain à fenêtre : patronyme mal lu et lieu-dit",
+    ids("MME FARGEDT HELENE\nLIEU DIT LES PRADEL1ERES\n16260 CELLEFROUIN")[0], "a7");
 }
 
 function fin() {

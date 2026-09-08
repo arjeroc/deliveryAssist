@@ -36,6 +36,9 @@ window.Scan = (function () {
 
   var LARGEUR_MAX = 1600;   // au-delà, on réduit : le moteur n'y gagne rien
   var LARGEUR_MIN = 1000;   // en deçà, on agrandit : le moteur y perd
+  // 1 200 px suffit aux petits caractères imprimés tout en restant nettement
+  // plus rapide que d'envoyer le flux 1080p entier au moteur. Le cadrage plus
+  // serré ci-dessous donne en outre davantage de pixels utiles au texte.
   var LARGEUR_OCR = 1200;   // largeur visée pour le recadrage vidéo
 
   // Cadre de capture, en fraction de l'image. Ces trois nombres sont aussi
@@ -45,7 +48,10 @@ window.Scan = (function () {
   // Un rectangle large, pas un carré : le scan se tient en paysage, seule
   // disposition de cet écran (voir .scan-live en CSS), et une adresse s'y
   // lit sur une vraie largeur plutôt que sur une bande pincée.
-  var CADRE = { partLargeur: 0.90, partHauteur: 0.70, marge: 0.12 };
+  // La marge n'est volontairement que de 3 %. Avec 12 %, 90 % de largeur
+  // dépassait 100 % : l'OCR lisait donc toute la scène (casier, bureau,
+  // expéditeur) et non pas seulement la lettre visée.
+  var CADRE = { partLargeur: 0.90, partHauteur: 0.70, marge: 0.03 };
 
   var INTERVALLE_OCR_DEFAUT = 700; // ms entre deux lectures, jamais par image
   var INTERVALLE_OCR_MIN = 400;    // en dessous, la caméra peine à fournir une image neuve
@@ -99,6 +105,8 @@ window.Scan = (function () {
 
   var tesseractPret = null;   // promesse de chargement, mise en cache
   var worker = null;
+  var workerPret = null;      // évite deux initialisations en parallèle
+  var workerEpoch = 0;        // invalide un préchauffage fermé entre-temps
   var moteurEnCharge = false;
 
   function escapeHtml(s) {
@@ -136,23 +144,49 @@ window.Scan = (function () {
   // pour qu'un viseur muet passe pour une panne.
   function obtenirWorker() {
     if (worker) return Promise.resolve(worker);
+    if (workerPret) return workerPret;
+    var epoch = workerEpoch;
     moteurEnCharge = true;
     majIndicationVue();
-    return chargerTesseract().then(function (T) {
+    workerPret = chargerTesseract().then(function (T) {
       return T.createWorker(LANGUE, 1);
     }).then(function (w) {
+      // Une étiquette n'est ni une page de livre ni une colonne : le mode
+      // « texte épars » trouve mieux un bloc destinataire, même avec un logo,
+      // un code DataMatrix ou une seconde adresse dans l'image. Le paramètre
+      // est posé une seule fois : pas de coût à chaque image vidéo.
+      return w.setParameters({
+        tessedit_pageseg_mode: "11",
+        user_defined_dpi: "300",
+        preserve_interword_spaces: "1"
+      }).then(function () { return w; });
+    }).then(function (w) {
+      // La surcouche a pu être fermée pendant le chargement. Dans ce cas le
+      // worker ne doit ni survivre discrètement ni réveiller l'ancien scan.
+      if (epoch !== workerEpoch) {
+        try { w.terminate(); } catch (e) { /* déjà terminé */ }
+        throw new Error("worker périmé");
+      }
       worker = w;
+      workerPret = null;
       moteurEnCharge = false;
       majIndicationVue();
       return w;
     }, function (e) {
-      moteurEnCharge = false;
-      majIndicationVue();
+      if (epoch === workerEpoch) {
+        workerPret = null;
+        moteurEnCharge = false;
+        majIndicationVue();
+      }
       throw e;
     });
+    return workerPret;
   }
 
   function libererWorker() {
+    workerEpoch += 1;
+    workerPret = null;
+    moteurEnCharge = false;
     if (!worker) return;
     var w = worker;
     worker = null;
@@ -176,8 +210,9 @@ window.Scan = (function () {
     return c;
   }
 
-  // Niveaux de gris puis étirement de contraste sur les centiles 2 et 98 :
-  // une encre grise sur papier blanc redevient franche.
+  // Niveaux de gris, contraste local puis léger renforcement des contours :
+  // les lettres pâles/imprimées sur une enveloppe brillante ressortent sans
+  // les écraser en noir et blanc (qui ferait disparaître les traits fins).
   function accentuer(canvas) {
     var ctx = canvas.getContext("2d");
     var img = ctx.getImageData(0, 0, canvas.width, canvas.height);
@@ -185,9 +220,12 @@ window.Scan = (function () {
     var histo = new Array(256).fill(0);
     var i;
 
-    for (i = 0; i < d.length; i += 4) {
+    var gris = new Uint8ClampedArray(canvas.width * canvas.height);
+    var p = 0;
+    for (i = 0; i < d.length; i += 4, p++) {
       var g = (d[i] * 0.299 + d[i + 1] * 0.587 + d[i + 2] * 0.114) | 0;
       d[i] = d[i + 1] = d[i + 2] = g;
+      gris[p] = g;
       histo[g] += 1;
     }
 
@@ -208,6 +246,23 @@ window.Scan = (function () {
       for (i = 0; i < d.length; i += 4) {
         var v = Math.max(0, Math.min(255, (d[i] - min) * echelle));
         d[i] = d[i + 1] = d[i + 2] = v;
+      }
+    }
+    // Un masque très doux (+ 35 % de détail) compense le lissage de la caméra
+    // sans fabriquer les halos qui perturbent l'OCR. Les bords restent tels
+    // quels pour ne pas rogner les caractères au bord du cadre.
+    var w = canvas.width, h = canvas.height;
+    for (var y = 1; y < h - 1; y++) {
+      for (var x = 1; x < w - 1; x++) {
+        var pos = y * w + x;
+        var voisinage = (gris[pos - 1] + gris[pos + 1] + gris[pos - w] + gris[pos + w]) / 4;
+        var net = Math.max(0, Math.min(255, gris[pos] + (gris[pos] - voisinage) * 0.35));
+        var di = pos * 4;
+        // Le contraste étiré fixe la luminosité ; le détail vient de l'image
+        // originale afin de ne pas amplifier le bruit dans les zones blanches.
+        var detail = net - gris[pos];
+        var final = Math.max(0, Math.min(255, d[di] + detail));
+        d[di] = d[di + 1] = d[di + 2] = final;
       }
     }
     ctx.putImageData(img, 0, 0);
@@ -974,6 +1029,12 @@ window.Scan = (function () {
     document.addEventListener("fullscreenchange", surOrientation);
 
     if (!C.videoDisponible(navigator, window.isSecureContext)) { session.modePhoto(); return; }
+
+    // Le téléchargement et l'initialisation WASM sont la seule latence
+    // perceptible au premier scan. On les recouvre avec l'ouverture de la
+    // caméra et le passage en paysage, au lieu de les faire attendre à la
+    // première image stable. Les scans suivants réutilisent ce worker.
+    obtenirWorker().catch(function () { /* la lecture réessaiera et signalera l'erreur utile */ });
 
     // Le plein écran exige le geste qui vient de nous amener ici : la demande
     // part donc maintenant, sans rien attendre. La caméra ne s'ouvre qu'après,
