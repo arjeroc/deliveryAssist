@@ -46,6 +46,11 @@ window.Store = (function () {
       tourneeColors: {},
       // Scan d'étiquette : expérimental, désactivable si la lecture déçoit.
       scanActif: true,
+      // Intervalle entre deux tentatives de lecture OCR en mode vidéo, en ms.
+      // Réglable dans les réglages avancés : plus bas, la détection est plus
+      // réactive ; la cadence (scan-core.js) empêche de toute façon deux
+      // lectures de se chevaucher.
+      scanIntervalleMs: 700,
       // Flèches de sens sur la trace : actives par défaut. C'est le seul
       // élément que la carte des Données pose par-dessus le trait, et il dit la
       // seule chose qu'un trait ne sait pas dire — dans quel sens on le suit.

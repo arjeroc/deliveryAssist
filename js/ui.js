@@ -3068,6 +3068,11 @@ window.UI = (function () {
         '<summary>Réglages avancés</summary>' +
         '<label class="switch-row"><input type="checkbox" id="admGeocodage" ' + (s.geocodageActif ? "checked" : "") + '> Activer le géocodage automatique (API adresse gouvernementale)</label>' +
         '<label class="switch-row"><input type="checkbox" id="admScan" ' + (s.scanActif !== false ? "checked" : "") + '> Scan d\'étiquette par la caméra (expérimental)</label>' +
+        '<div class="range-row">' +
+          '<label for="admScanIntervalle">Fréquence de recherche du scan (<span id="admScanIntervalleValeur">' +
+            (s.scanIntervalleMs || 700) + '</span>&nbsp;ms entre deux lectures)</label>' +
+          '<input type="range" id="admScanIntervalle" min="400" max="1500" step="50" value="' + (s.scanIntervalleMs || 700) + '">' +
+        '</div>' +
         '<label class="switch-row"><input type="checkbox" id="admFleches" ' + (s.flechesSens !== false ? "checked" : "") + '> Flèches de sens sur la trace (au zoom rapproché)</label>' +
         '<label class="switch-row"><input type="checkbox" id="admMulti" ' + (multi ? "checked" : "") + '> Gérer plusieurs fichiers de tournée (empilement)</label>' +
         '<div class="toolbar">' +
@@ -3166,6 +3171,12 @@ window.UI = (function () {
     document.getElementById("admScan").addEventListener("change", function (e) {
       S.setSetting("scanActif", e.target.checked);
       renderPrep();
+    });
+    document.getElementById("admScanIntervalle").addEventListener("input", function (e) {
+      document.getElementById("admScanIntervalleValeur").textContent = e.target.value;
+    });
+    document.getElementById("admScanIntervalle").addEventListener("change", function (e) {
+      S.setSetting("scanIntervalleMs", Number(e.target.value));
     });
     document.getElementById("admFleches").addEventListener("change", function (e) {
       S.setSetting("flechesSens", e.target.checked);

@@ -573,11 +573,18 @@ details.advanced summary{font-size:12.5px;color:var(--accent);cursor:pointer;fon
 
 #scanOverlay{
   position:fixed;inset:0;background:var(--bg);z-index:2600;transform:translateY(100%);
-  transition:transform .2s ease;overflow-y:auto;
+  transition:transform .2s ease;display:flex;flex-direction:column;
 }
 #scanOverlay.open{transform:translateY(0);}
-#scanOverlay .topbar{position:sticky;top:0;}
-#scanBody{padding:16px 14px 40px;max-width:760px;margin:0 auto;}
+#scanOverlay .topbar{position:sticky;top:0;flex:0 0 auto;}
+/* flex:1 + min-height:0 rend #scanBody défilant à la place de l'overlay :
+   ça laisse le viseur (voir .scan-live) s'y loger sans être poussé par les
+   résultats, tout en gardant le défilement normal des autres écrans (photo,
+   attribution, erreur). */
+#scanBody{
+  padding:16px 14px 40px;max-width:760px;margin:0 auto;width:100%;
+  flex:1 1 auto;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch;
+}
 
 .scan-intro{font-size:14px;line-height:1.5;margin:0 0 16px;}
 .scan-note{font-size:12px;color:var(--muted);line-height:1.5;margin-top:16px;}
@@ -619,12 +626,20 @@ details.advanced summary{font-size:12.5px;color:var(--accent);cursor:pointer;fon
 }
 
 /* --- scan : viseur vidéo --- */
+/* .scan-live tient le viseur en haut, fixe, et les résultats en dessous,
+   seuls à défiler : c'est elle qui reçoit toute la hauteur que #scanBody
+   (voir plus haut) lui laisse, sans quoi flex:1 sur .scan-results n'aurait
+   rien à contraindre. */
+.scan-live{display:flex;flex-direction:column;height:100%;min-height:0;}
 /* Le conteneur reçoit en JS le rapport exact de l'image, et la vidéo le
    remplit sans recadrage (fill) : le cadre dessiné ci-dessous tombe alors au
-   pixel près sur la zone découpée pour l'OCR. */
+   pixel près sur la zone découpée pour l'OCR — quelle que soit la hauteur
+   choisie ici, puisque .scan-cadre et la capture OCR partagent les mêmes
+   fractions (voir CADRE dans scan.js), indépendamment de l'étirement. */
 .scan-viseur{
-  position:relative;width:100%;aspect-ratio:4/3;background:#0d0f0d;
-  border-radius:14px;overflow:hidden;margin-bottom:12px;
+  position:relative;width:100%;flex:0 0 auto;
+  height:27vh;min-height:190px;max-height:255px;background:#0d0f0d;
+  border-radius:14px;overflow:hidden;margin-bottom:10px;
 }
 .scan-viseur video{position:absolute;inset:0;width:100%;height:100%;object-fit:fill;display:block;}
 /* Mêmes fractions que CADRE dans scan.js : 86 % de large, 46 % de haut,
@@ -639,6 +654,9 @@ details.advanced summary{font-size:12.5px;color:var(--accent);cursor:pointer;fon
   color:#fff;font-size:13px;font-weight:600;text-shadow:0 1px 3px rgba(0,0,0,.65);
 }
 .scan-hint-alerte{color:#ffd9a8;}
+/* Seule zone défilante du viseur : le scan reste visible pendant qu'on
+   parcourt les adresses trouvées. */
+.scan-results{flex:1 1 auto;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch;}
 .scan-suggestions{min-height:64px;}
 .scan-attente{margin:0;padding:18px 8px;text-align:center;color:var(--muted);font-size:13px;}
 .scan-lien{
@@ -808,6 +826,9 @@ details.advanced summary{font-size:12.5px;color:var(--accent);cursor:pointer;fon
 .toolbar button{padding:10px 12px;border-radius:8px;border:1px solid var(--line);background:#fff;font-weight:700;font-size:13px;}
 .toolbar button.primary{background:var(--accent);border-color:var(--accent);color:#fff;}
 .switch-row{display:flex;align-items:center;gap:8px;font-size:13.5px;margin:12px 0;}
+.range-row{margin:12px 0;}
+.range-row label{display:block;font-size:13.5px;margin-bottom:6px;}
+.range-row input[type="range"]{width:100%;accent-color:var(--accent);}
 .hint{display:block;color:var(--muted);font-size:11.5px;margin-top:8px;}
 hr{border:none;border-top:1px solid var(--line);margin:14px 0;}
 

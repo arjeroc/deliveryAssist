@@ -43,7 +43,9 @@ window.Scan = (function () {
   // volontairement du trait visible, pour rattraper un nom écrit de travers.
   var CADRE = { partLargeur: 0.86, partHauteur: 0.46, marge: 0.12 };
 
-  var INTERVALLE_OCR = 1100; // ms entre deux lectures : ~1 s, jamais par image
+  var INTERVALLE_OCR_DEFAUT = 700; // ms entre deux lectures, jamais par image
+  var INTERVALLE_OCR_MIN = 400;    // en dessous, la caméra peine à fournir une image neuve
+  var INTERVALLE_OCR_MAX = 1500;   // au-delà, la détection traîne trop pour le terrain
   var PERIODE_MESURE = 150;  // ms entre deux contrôles de netteté
   var PERIODE_BOUCLE = 120;  // ms de la boucle de repli, sans rVFC
   var GARDE_RVFC = 500;      // ms sans image avant de déclarer rVFC muet
@@ -522,13 +524,17 @@ window.Scan = (function () {
   // réécrire le conteneur à chaque lecture arracherait la vidéo de la page.
   function monterViseur() {
     els.body.innerHTML =
-      '<div class="scan-viseur" id="scanViseur">' +
-        '<div class="scan-cadre" aria-hidden="true"></div>' +
-        '<div class="scan-hint" id="scanHint"></div>' +
-      '</div>' +
-      '<div class="scan-suggestions" id="scanSuggestions"></div>' +
-      '<button type="button" class="scan-lien" data-action="scan-photo">' +
-        '📷 Prendre une photo à la place</button>';
+      '<div class="scan-live">' +
+        '<div class="scan-viseur" id="scanViseur">' +
+          '<div class="scan-cadre" aria-hidden="true"></div>' +
+          '<div class="scan-hint" id="scanHint"></div>' +
+        '</div>' +
+        '<div class="scan-results">' +
+          '<div class="scan-suggestions" id="scanSuggestions"></div>' +
+          '<button type="button" class="scan-lien" data-action="scan-photo">' +
+            '📷 Prendre une photo à la place</button>' +
+        '</div>' +
+      '</div>';
     var cadre = document.getElementById("scanViseur");
     cadre.insertBefore(assurerVideo(), cadre.firstChild);
     viseurMonte = true;
@@ -691,6 +697,15 @@ window.Scan = (function () {
     }
   }
 
+  // Lu à l'ouverture du scan, pas pendant : changer le réglage en cours de
+  // session ne redémarrerait pas la cadence pour rien, il s'appliquera à la
+  // prochaine ouverture.
+  function intervalleOcr() {
+    var v = Number(window.Store.getSettings().scanIntervalleMs);
+    if (!v || isNaN(v)) return INTERVALLE_OCR_DEFAUT;
+    return Math.max(INTERVALLE_OCR_MIN, Math.min(INTERVALLE_OCR_MAX, v));
+  }
+
   // ---------------------------------------------------------------------
   // Session
   // ---------------------------------------------------------------------
@@ -699,7 +714,7 @@ window.Scan = (function () {
       types: window.Prep.TYPES.map(function (t) { return t.key; }),
       prep: window.Prep,
       idTournee: function () { return window.Store.getIdTournee(); },
-      intervalle: INTERVALLE_OCR,
+      intervalle: intervalleOcr(),
       demarrerCamera: demarrerCamera,
       arreterCamera: arreterCamera,
       reconnaitre: reconnaitreVideo,
