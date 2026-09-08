@@ -94,7 +94,6 @@ console.log("\n=== 2. Deux fichiers : une trace chacun, jamais reliées ===");
 {
   const { S, P } = chargerParcours();
   S.load();
-  S.setSetting("multiTournees", true);
   S.importFromCSV(CSV_A, { mode: "remplacer" });
   S.importFromCSV(CSV_B, { mode: "ajouter" });
   verifie("empilement actif", S.multiActif(), true);
@@ -126,7 +125,6 @@ console.log("\n=== 3. L'ordre de la pile réordonne les traces ===");
 {
   const { S, P } = chargerParcours();
   S.load();
-  S.setSetting("multiTournees", true);
   S.importFromCSV(CSV_A, { mode: "remplacer" });
   S.importFromCSV(CSV_B, { mode: "ajouter" });
   S.setOrdreFichiers(["tm1", "tm0"]);
@@ -154,7 +152,6 @@ console.log("\n=== 4. Couleur choisie : retenue et persistée ===");
   vm.runInContext(srcParcours, sandbox);
   const S1 = sandbox.window.Store;
   S1.load();
-  S1.setSetting("multiTournees", true);
   S1.importFromCSV(CSV_A, { mode: "remplacer" });
   S1.importFromCSV(CSV_B, { mode: "ajouter" });
   const autoTm0 = S1.getTourneeColor("tm0");
@@ -177,7 +174,6 @@ console.log("\n=== 5. La distance ne compte pas le saut entre deux tournées ===
 {
   const { S, P } = chargerParcours();
   S.load();
-  S.setSetting("multiTournees", true);
   S.importFromCSV(CSV_A, { mode: "remplacer" });
   S.importFromCSV(CSV_B, { mode: "ajouter" });
 

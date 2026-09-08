@@ -36,10 +36,6 @@ window.Store = (function () {
     settings: {
       geocodageActif: true,
       communeColors: {},
-      // Plusieurs fichiers de tournée empilés dans une même tournée. Hors de ce
-      // drapeau, l'application ne connaît qu'un fichier et se comporte
-      // exactement comme avant.
-      multiTournees: false,
       // Couleur de la trace de chaque fichier empilé, par identifiant de
       // fichier. Vide au départ : une couleur de la palette est attribuée
       // d'office, et n'est retenue ici que si l'utilisateur en choisit une.
@@ -265,12 +261,11 @@ window.Store = (function () {
   // dans l'autre, même adresse pour adresse. Ce qui les départage est l'ordre
   // d'empilement choisi par l'utilisateur, et lui seul.
   //
-  // Tant qu'un seul fichier est chargé — le cas courant, et le seul que connaît
-  // l'application drapeau baissé — tout ce mécanisme reste transparent : le rang
-  // de fichier est constant, le discriminant vide, et l'ordre comme les clés de
-  // regroupement sont mot pour mot ceux d'avant.
+  // Tant qu'un seul fichier est chargé — le cas courant — tout ce mécanisme
+  // reste transparent : le rang de fichier est constant, le discriminant vide,
+  // et l'ordre comme les clés de regroupement sont mot pour mot ceux d'avant.
   function multiActif() {
-    return state.settings.multiTournees === true && state.fichiers.length > 1;
+    return state.fichiers.length > 1;
   }
 
   function indexFichier(id) {
@@ -400,7 +395,6 @@ window.Store = (function () {
   }
 
   function zoneIntegree(row) {
-    if (state.settings.multiTournees !== true) return true;
     if (!hasCasier(row)) return true;
     return !zonesExclues(row.id_tournee || "")[casierCle(row)];
   }

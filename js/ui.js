@@ -648,7 +648,7 @@ window.UI = (function () {
         '<h3>🗂️ Tri de tournée</h3>' +
         '<div class="kv"><span>Colonne</span><strong>' + (escapeHtml(row.casier_c) || "—") + '</strong></div>' +
         '<div class="kv"><span>Ligne</span><strong>' + (escapeHtml(row.casier_l) || "—") + '</strong></div>' +
-        (S.getSettings().multiTournees === true
+        (S.getFichiers().length > 1
           ? '<div class="kv"><span>Tournée</span><strong>' + escapeHtml(row.id_tournee || "—") + '</strong></div>'
           : "") +
         '<div class="kv"><span>Casier</span><strong>' + escapeHtml(S.casierLabelEtape(row)) + '</strong></div>' +
@@ -941,9 +941,8 @@ window.UI = (function () {
   // même. Le champ liste les fichiers chargés ; l'adresse en cours garde le sien
   // même s'il ne figure plus dans la pile, pour ne pas la déplacer en silence.
   function ficheTourneeHTML(row) {
-    if (S.getSettings().multiTournees !== true) return "";
     var fichiers = S.getFichiers();
-    if (!fichiers.length) return "";
+    if (fichiers.length <= 1) return "";
     var courant = row.id_tournee || "";
     var options = fichiers.map(function (f) {
       return '<option value="' + escapeHtml(f.id) + '"' + (f.id === courant ? " selected" : "") + '>' +
@@ -1222,9 +1221,8 @@ window.UI = (function () {
   // sur le premier de la pile plutôt que sur une préparation vide sans raison
   // visible.
   function prepFichierCourant() {
-    if (S.getSettings().multiTournees !== true) return "";
     var fichiers = S.getFichiers();
-    if (!fichiers.length) return "";
+    if (fichiers.length <= 1) return "";
     var existe = fichiers.some(function (f) { return f.id === prepFichierId; });
     if (!existe) prepFichierId = fichiers[0].id;
     return prepFichierId;
@@ -1237,7 +1235,7 @@ window.UI = (function () {
 
   function prepSelecteurTourneeHTML() {
     var fichiers = S.getFichiers();
-    if (S.getSettings().multiTournees !== true || fichiers.length < 2) return "";
+    if (fichiers.length < 2) return "";
     var courant = prepFichierCourant();
     return '<div class="prep-tournee">' +
         '<label for="prepTourneeSel">Tournée</label>' +
@@ -2876,17 +2874,9 @@ window.UI = (function () {
     return fichierCardHTML(fichiers[fichierIndex], fichierIndex, fichiers.length);
   }
 
-  // Étape 2 de l'import. Un seul fichier : le champ d'hier, qui remplace la
-  // base. Plusieurs : les cartes de fichiers, et un champ qui ajoute au lieu de
-  // remplacer.
-  function etapeFichiersHTML(multi) {
-    if (!multi) {
-      return '<div class="field admin-step">' +
-        '<label class="admin-step-title" for="admFileInput"><span class="admin-step-num">2</span>Import du fichier</label>' +
-        '<input type="file" id="admFileInput" accept=".csv,text/csv">' +
-        '<div id="adminStatus"></div>' +
-      '</div>';
-    }
+  // Étape d'import : les cartes de fichiers empilés, et un champ qui ajoute
+  // au fichier déjà chargé plutôt que de le remplacer.
+  function etapeFichiersHTML() {
     return '<div class="field admin-step">' +
       '<div class="admin-step-title"><span class="admin-step-num">1</span>Fichiers de tournée</div>' +
       '<div id="pileFichiersWrap">' + fichiersPileHTML() + '</div>' +
@@ -2961,9 +2951,8 @@ window.UI = (function () {
   var exportExclus = {};
 
   function exportSelectionHTML() {
-    var multi = S.getSettings().multiTournees === true;
     var fichiers = S.getFichiers();
-    if (!multi || fichiers.length < 2) return "";
+    if (fichiers.length < 2) return "";
     var retenus = fichiers.filter(function (f) { return !exportExclus[f.id]; }).length;
     return '<small class="hint admin-section-hint">Tournées à exporter.</small>' +
       '<div class="export-liste">' +
@@ -2990,7 +2979,7 @@ window.UI = (function () {
 
   function fichiersExportes() {
     var fichiers = S.getFichiers();
-    if (S.getSettings().multiTournees !== true || fichiers.length < 2) return [];
+    if (fichiers.length < 2) return [];
     return fichiers.filter(function (f) { return !exportExclus[f.id]; }).map(function (f) { return f.id; });
   }
 
@@ -3062,21 +3051,10 @@ window.UI = (function () {
 
   function renderAdmin() {
     var s = S.getSettings();
-    var multi = s.multiTournees === true;
     els.adminBody.innerHTML =
       '<section class="admin-section">' +
         '<h2 class="admin-section-title">Import des données</h2>' +
-        // Sous empilement, l'identifiant de tournée n'est plus une donnée globale :
-        // il appartient au fichier et se règle sur sa carte.
-        (multi ? "" :
-          '<div class="field admin-step">' +
-            '<div class="admin-step-title"><span class="admin-step-num">1</span>Identifiant de tournée</div>' +
-            '<div class="fc-id">' +
-              '<span class="fc-id-valeur">' + escapeHtml(S.getIdTournee()) + '</span>' +
-              '<span class="fc-id-source">lu dans la colonne <code>id_tournee</code> du fichier</span>' +
-            '</div>' +
-          '</div>') +
-        etapeFichiersHTML(multi) +
+        etapeFichiersHTML() +
         traceEtatHTML() +
       '</section>' +
       '<section class="admin-section">' +
@@ -3113,7 +3091,6 @@ window.UI = (function () {
         '</div>' +
         '<label class="switch-row"><input type="checkbox" id="admScanPivot" ' + (s.scanPivotInverse ? "checked" : "") + '> Inverser le sens de rotation de l\'écran de scan (téléphone verrouillé en portrait)</label>' +
         '<label class="switch-row"><input type="checkbox" id="admFleches" ' + (s.flechesSens !== false ? "checked" : "") + '> Flèches de sens sur la trace (au zoom rapproché)</label>' +
-        '<label class="switch-row"><input type="checkbox" id="admMulti" ' + (multi ? "checked" : "") + '> Gérer plusieurs fichiers de tournée (empilement)</label>' +
         '<div class="toolbar">' +
           '<button data-action="admin-sample">Charger un exemple</button>' +
           '<button class="danger" data-action="admin-clear">Vider les données</button>' +
@@ -3170,19 +3147,17 @@ window.UI = (function () {
     document.getElementById("admFileInput").addEventListener("change", function (ev) {
       var file = ev.target.files[0];
       if (!file) return;
-      // Empilement actif : le fichier s'ajoute à ceux déjà chargés. Sinon il
-      // remplace la base, comme il l'a toujours fait.
-      var multi = S.getSettings().multiTournees === true;
+      // Le fichier s'ajoute à ceux déjà chargés, dans la pile.
       var avant = etatEmpilement();
       var reader = new FileReader();
       reader.onload = function () {
         var res = S.importFromCSV(String(reader.result), {
-          mode: multi ? "ajouter" : "remplacer",
+          mode: "ajouter",
           nomFichier: file.name
         });
         if (!res.ok) { showAdminStatus("err", res.message); return; }
-        var msg = (multi ? "Fichier « " + res.idFichier + " » : " : "Import : ") + res.count + " ligne(s)";
-        msg += multi ? " · " + res.total + " au total." : ".";
+        var msg = "Fichier « " + res.idFichier + " » : " + res.count + " ligne(s)";
+        msg += " · " + res.total + " au total.";
         if (res.missingCols.length) msg += " Colonnes absentes : " + res.missingCols.join(", ") + ".";
         if (res.errors.length) msg += " " + res.errors.length + " erreur(s).";
         if (res.warnings.length) msg += " " + res.warnings.length + " avertissement(s).";
@@ -3223,9 +3198,6 @@ window.UI = (function () {
     document.getElementById("admFleches").addEventListener("change", function (e) {
       S.setSetting("flechesSens", e.target.checked);
       Parcours.rafraichirAffichage();
-    });
-    document.getElementById("admMulti").addEventListener("change", function (e) {
-      basculerMultiTournees(e.target);
     });
     bindPileFichiers();
     bindExportSelection();
@@ -3279,28 +3251,6 @@ window.UI = (function () {
     renderSearch();
     renderPrep();
     renderSuivi();
-  }
-
-  // Le drapeau ne se baisse pas en silence sur une pile de plusieurs fichiers :
-  // hors empilement, l'application ne sait porter qu'un fichier, et deux
-  // fichiers laissés là verraient leurs cases se confondre. On dit ce qu'on
-  // garde, et on attend la réponse.
-  function basculerMultiTournees(checkbox) {
-    var avant = etatEmpilement();
-    if (!checkbox.checked && avant.fichiers.length > 1) {
-      var garde = avant.fichiers[0];
-      var perdus = avant.fichiers.length - 1;
-      if (!confirmAction(
-            "Sans empilement, la tournée ne porte qu'un fichier.\n\n" +
-            "Garder « " + garde.id + " » et retirer " + perdus + " autre(s) fichier(s) ?")) {
-        checkbox.checked = true;
-        return;
-      }
-      avant.fichiers.slice(1).forEach(function (f) { S.retirerFichier(f.id); });
-    }
-    S.setSetting("multiTournees", checkbox.checked);
-    apresChangementDePile(avant);
-    renderAdmin();
   }
 
   function deplacerFichierDansLaPile(id, delta) {
@@ -3745,8 +3695,7 @@ window.UI = (function () {
 
   function exportCSV() {
     var choisis = fichiersExportes();
-    if (choisis && choisis.length === 0 && S.getSettings().multiTournees === true &&
-        S.getFichiers().length > 1) {
+    if (choisis && choisis.length === 0 && S.getFichiers().length > 1) {
       showAdminStatus("err", "Aucune tournée cochée : rien à exporter.");
       return;
     }

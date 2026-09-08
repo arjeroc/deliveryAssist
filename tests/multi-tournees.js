@@ -41,7 +41,7 @@ function ligne(id, tour, nom, rue, c, l, oz, or_) {
 }
 
 // --------------------------------------------------------------------------
-console.log("\n=== 1. Un seul fichier : rien ne change, drapeau levé ou non ===");
+console.log("\n=== 1. Un seul fichier : rien ne change ===");
 {
   const S = chargerStore();
   S.load();
@@ -52,16 +52,11 @@ console.log("\n=== 1. Un seul fichier : rien ne change, drapeau levé ou non ===
     ligne("a4", "tm0", "HORS", "RUE C", "", "", 9, 1),
   ]));
   const ordre = () => S.rowsOrdreTournee().map((r) => r.id);
-  verifie("ordre drapeau baissé", ordre(), ["a1", "a2", "a3", "a4"]);
+  verifie("ordre inchangé", ordre(), ["a1", "a2", "a3", "a4"]);
   verifie("pas d'empilement", S.multiActif(), false);
   verifie("un fichier détecté", S.getFichiers().map((f) => f.id), ["tm0"]);
   verifie("clés de casier inchangées", S.etapesCasier().map((e) => e.cle), ["C1L1", "C1L2", "hors"]);
   verifie("suffixe vide", S.suffixeFichier({ id_tournee: "tm0" }), "");
-
-  S.setSetting("multiTournees", true);
-  verifie("drapeau levé, un seul fichier : toujours pas d'empilement", S.multiActif(), false);
-  verifie("ordre identique", ordre(), ["a1", "a2", "a3", "a4"]);
-  verifie("clés identiques", S.etapesCasier().map((e) => e.cle), ["C1L1", "C1L2", "hors"]);
 }
 
 // --------------------------------------------------------------------------
@@ -69,7 +64,6 @@ console.log("\n=== 2. Deux fichiers empilés : priorité de la pile sur C1L1 ===
 {
   const S = chargerStore();
   S.load();
-  S.setSetting("multiTournees", true);
   S.importFromCSV(csv([
     ligne("a1", "tm0", "MARTIN", "RUE A", 1, 1, 1, 1),
     ligne("a2", "tm0", "DUBOIS", "RUE B", 1, 2, 2, 1),
@@ -105,7 +99,6 @@ console.log("\n=== 3. Même adresse dans deux fichiers : jamais fusionnée ===")
 {
   const S = chargerStore();
   S.load();
-  S.setSetting("multiTournees", true);
   S.importFromCSV(csv([ligne("x1", "tm0", "MARTIN", "RUE A", 1, 1, 1, 1)]), { mode: "remplacer" });
   // même id de ligne ET même adresse, dans un autre fichier
   S.importFromCSV(csv([ligne("x1", "tm1", "MARTIN", "RUE A", 1, 1, 1, 1)]), { mode: "ajouter" });
@@ -129,7 +122,6 @@ console.log("\n=== 3b. Une colonne n'en efface jamais une autre ===");
 {
   const S = chargerStore();
   S.load();
-  S.setSetting("multiTournees", true);
   // tm1 : C1 C2 C3   —   tm0 : C1 C2 C4
   S.importFromCSV(csv([
     ligne("m1", "tm1", "A", "RUE A", 1, 1, 1, 1),
@@ -159,7 +151,6 @@ console.log("\n=== 3c. Zones écartées, identifiant lu, export choisi ===");
 {
   const S = chargerStore();
   S.load();
-  S.setSetting("multiTournees", true);
   S.importFromCSV(csv([
     ligne("z1", "tm0", "A", "RUE A", 1, 1, 1, 1),
     ligne("z2", "tm0", "B", "RUE B", 1, 2, 2, 1),
@@ -235,7 +226,6 @@ console.log("\n=== 4. Retrait d'un fichier, retour au mono-fichier ===");
 {
   const S = chargerStore();
   S.load();
-  S.setSetting("multiTournees", true);
   S.importFromCSV(csv([ligne("a1", "tm0", "A", "RUE A", 1, 1, 1, 1)]), { mode: "remplacer" });
   S.importFromCSV(csv([ligne("b1", "tm1", "B", "RUE B", 1, 1, 1, 1)]), { mode: "ajouter" });
   verifie("clés suffixées à deux", S.etapesCasier().map((e) => e.cle), ["C1L1@tm0", "C1L1@tm1"]);
@@ -251,7 +241,6 @@ console.log("\n=== 5. Réimport d'un fichier déjà empilé : mise à jour en pl
 {
   const S = chargerStore();
   S.load();
-  S.setSetting("multiTournees", true);
   S.importFromCSV(csv([ligne("a1", "tm0", "A", "RUE A", 1, 1, 1, 1)]), { mode: "remplacer" });
   S.importFromCSV(csv([ligne("b1", "tm1", "B", "RUE B", 1, 1, 1, 1)]), { mode: "ajouter" });
   S.setOrdreFichiers(["tm1", "tm0"]);
@@ -275,7 +264,6 @@ console.log("\n=== 6. Persistance de l'ordre à travers un rechargement ===");
   vm.runInContext(src, sandbox);
   const S1 = sandbox.window.Store;
   S1.load();
-  S1.setSetting("multiTournees", true);
   S1.importFromCSV(csv([ligne("a1", "tm0", "A", "RUE A", 1, 1, 1, 1)]), { mode: "remplacer" });
   S1.importFromCSV(csv([ligne("b1", "tm1", "B", "RUE B", 1, 1, 1, 1)]), { mode: "ajouter" });
   S1.setOrdreFichiers(["tm1", "tm0"]);
@@ -285,12 +273,11 @@ console.log("\n=== 6. Persistance de l'ordre à travers un rechargement ===");
   const S2 = sandbox.window.Store;
   S2.load();
   verifie("ordre relu tel quel", S2.getFichiers().map((f) => f.id), ["tm1", "tm0"]);
-  verifie("drapeau relu", S2.getSettings().multiTournees, true);
   verifie("ordre de tournée conservé", S2.rowsOrdreTournee().map((r) => r.id_tournee), ["tm1", "tm0"]);
 }
 
 // --------------------------------------------------------------------------
-console.log("\n=== 7. Pile héritée d'un stockage sans pile ===");
+console.log("\n=== 7. Pile reconstruite depuis un stockage sans pile ===");
 {
   const sandbox = { window: {}, localStorage: fauxLocalStorage(), console };
   sandbox.window.localStorage = sandbox.localStorage;
@@ -307,8 +294,10 @@ console.log("\n=== 7. Pile héritée d'un stockage sans pile ===");
   S.load();
   verifie("pile reconstruite depuis les données", S.getFichiers().map((f) => f.id), ["tm0", "tm1"]);
   verifie("comptes justes", S.getFichiers().map((f) => f.count), [1, 1]);
-  verifie("drapeau baissé par défaut : pas d'empilement", S.multiActif(), false);
-  verifie("comportement d'avant préservé", S.etapesCasier().map((e) => e.cle), ["C1L1"]);
+  // Deux id_tournee distincts dans les données : l'empilement s'active
+  // d'office, sans réglage à retrouver.
+  verifie("deux fichiers détectés : empilement actif", S.multiActif(), true);
+  verifie("clés suffixées par fichier", S.etapesCasier().map((e) => e.cle), ["C1L1@tm0", "C1L1@tm1"]);
 }
 
 console.log(echecs === 0 ? "\nTOUT PASSE" : "\n" + echecs + " ECHEC(S)");
