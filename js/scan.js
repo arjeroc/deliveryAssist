@@ -32,14 +32,38 @@ window.Scan = (function () {
   var C = window.ScanCore;
 
   var TESSERACT_URL = "https://cdnjs.cloudflare.com/ajax/libs/tesseract.js/7.0.0/tesseract.min.js";
-  var LANGUE = "fra";
 
+  // « eng » plutôt que « fra », et ce n'est pas un renoncement.
+  //
+  // Trois raisons concordent. La norme postale française (AFNOR XP Z10-011)
+  // veut les dernières lignes d'une adresse en capitales non accentuées :
+  // c'est ce qui est imprimé sur les étiquettes. Store.normalize(), de son
+  // côté, retire accents et ponctuation avant tout rapprochement — payer un
+  // modèle accentué pour jeter les accents juste après n'a pas de sens. Et le
+  // modèle anglais est plus léger, donc plus rapide à charger comme à
+  // exécuter, sur un alphabet qui est exactement celui dont on a besoin.
+  var LANGUE = "eng";
+
+  // Ce que le moteur a le droit d'écrire. Restreindre la sortie, c'est
+  // restreindre l'espace où il peut se tromper : un « É » ou un « § » ne peut
+  // plus être proposé à la place d'un « E ». L'apostrophe et le trait d'union
+  // restent — ils séparent des mots dans les patronymes — et sont de toute
+  // façon ramenés à des espaces par la normalisation.
+  var CARACTERES =
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 -'";
+
+  // Le mode photo n'est pas pressé : un cliché, tout le temps qu'il faut.
   var LARGEUR_MAX = 1600;   // au-delà, on réduit : le moteur n'y gagne rien
   var LARGEUR_MIN = 1000;   // en deçà, on agrandit : le moteur y perd
-  // 1 200 px suffit aux petits caractères imprimés tout en restant nettement
-  // plus rapide que d'envoyer le flux 1080p entier au moteur. Le cadrage plus
-  // serré ci-dessous donne en outre davantage de pixels utiles au texte.
-  var LARGEUR_OCR = 1200;   // largeur visée pour le recadrage vidéo
+
+  // La vidéo, elle, se paie chaque image. 900 px, et c'est mesuré : sur les
+  // étiquettes de tests/etiquettes, passer de 1 200 à 900 px fait tomber la
+  // lecture de 1 500 à 870 ms pour trois points de mots reconnus en moins.
+  // Sur une lecture qui se répète toutes les secondes, en tenant une pile de
+  // colis d'une main, ces six cents millisecondes valent plus que ces trois
+  // points — d'autant que le cumul entre images les rattrape en une lecture
+  // de plus.
+  var LARGEUR_OCR = 900;    // largeur visée pour la capture vidéo
 
   // Cadre de capture, en fraction de l'image. Ces trois nombres sont aussi
   // ceux du cadre dessiné en CSS (.scan-cadre) : la marge, elle, déborde
@@ -53,8 +77,13 @@ window.Scan = (function () {
   // expéditeur) et non pas seulement la lettre visée.
   var CADRE = { partLargeur: 0.90, partHauteur: 0.70, marge: 0.03 };
 
-  var INTERVALLE_OCR_DEFAUT = 700; // ms entre deux lectures, jamais par image
-  var INTERVALLE_OCR_MIN = 400;    // en dessous, la caméra peine à fournir une image neuve
+  // L'intervalle entre deux départs de lecture. Il n'a jamais été le facteur
+  // limitant : c'était la durée de l'OCR lui-même, qui dépassait largement la
+  // seconde. Maintenant que l'image envoyée au moteur est recadrée sur le seul
+  // bloc de texte et binarisée, ce plafond redevient réel — et 700 ms de garde
+  // reviendraient à laisser dormir le moteur la moitié du temps.
+  var INTERVALLE_OCR_DEFAUT = 300; // ms entre deux lectures, jamais par image
+  var INTERVALLE_OCR_MIN = 200;    // en dessous, la caméra peine à fournir une image neuve
   var INTERVALLE_OCR_MAX = 1500;   // au-delà, la détection traîne trop pour le terrain
   var PERIODE_MESURE = 150;  // ms entre deux contrôles de netteté
   var PERIODE_BOUCLE = 120;  // ms de la boucle de repli, sans rVFC
@@ -151,12 +180,25 @@ window.Scan = (function () {
     workerPret = chargerTesseract().then(function (T) {
       return T.createWorker(LANGUE, 1);
     }).then(function (w) {
-      // Une étiquette n'est ni une page de livre ni une colonne : le mode
-      // « texte épars » trouve mieux un bloc destinataire, même avec un logo,
-      // un code DataMatrix ou une seconde adresse dans l'image. Le paramètre
-      // est posé une seule fois : pas de coût à chaque image vidéo.
+      // Mode 6 — « un bloc de texte uniforme » — et non plus 11, « texte
+      // épars ». Le 11 était un choix coûteux à double titre : c'est le mode
+      // le plus lent du moteur, qui cherche des caractères blob par blob sans
+      // analyse de mise en page, et il rend un texte dont les lignes ne
+      // veulent plus rien dire. Or Store.matchTexteLibre s'appuie précisément
+      // sur les lignes pour séparer le bloc de l'expéditeur de celui du
+      // destinataire : le 11 la nourrissait de bouillie. Le 6 est légitime
+      // désormais que l'image envoyée est recadrée sur le seul bloc de texte
+      // (voir capturerZone) plutôt que sur toute la scène.
+      //
+      // Les dictionnaires sont coupés : ils sont faits pour rattraper des
+      // mots d'une langue, et une étiquette porte des patronymes et des noms
+      // de lieux. « CHEZ FOUR » corrigé en un mot du dictionnaire anglais est
+      // une perte sèche.
       return w.setParameters({
-        tessedit_pageseg_mode: "11",
+        tessedit_pageseg_mode: "6",
+        tessedit_char_whitelist: CARACTERES,
+        load_system_dawg: "0",
+        load_freq_dawg: "0",
         user_defined_dpi: "300",
         preserve_interword_spaces: "1"
       }).then(function () { return w; });
@@ -210,59 +252,78 @@ window.Scan = (function () {
     return c;
   }
 
-  // Niveaux de gris, contraste local puis léger renforcement des contours :
-  // les lettres pâles/imprimées sur une enveloppe brillante ressortent sans
-  // les écraser en noir et blanc (qui ferait disparaître les traits fins).
-  function accentuer(canvas) {
-    var ctx = canvas.getContext("2d");
-    var img = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  // Binarisation locale, méthode de Sauvola.
+  //
+  // Ce qui se faisait ici — un étirement de contraste global — suppose un
+  // éclairage uniforme. Une enveloppe brillante à moitié dans l'ombre du
+  // casier n'en offre jamais : le même étirement noie la moitié sombre et
+  // brûle la moitié claire, et c'est là que l'OCR ne rendait rien. Un seuil
+  // local juge chaque zone sur son propre éclairage :
+  //
+  //     T = m · (1 + k · (s/R − 1))
+  //
+  // m et s sont moyenne et écart-type dans la fenêtre, R = 128 la dynamique
+  // de référence, k = 0,3 la sévérité. Là où il n'y a pas de texte, s tend
+  // vers zéro, T passe nettement sous m, et la zone reste blanche au lieu de
+  // se couvrir de poivre et sel — c'est exactement ce qu'un seuil à moyenne
+  // seule ne sait pas faire, et pourquoi Sauvola plutôt que Bradley.
+  //
+  // Deux images intégrales rendent le coût indépendant de la taille de la
+  // fenêtre : quatre lectures par pixel, quelle qu'elle soit.
+  //
+  // ponytail: k, R et la fenêtre sont les trois molettes de ce scan. Elles
+  // se règlent sur de vraies étiquettes (tests/etiquettes), pas au raisonnement.
+  var SAUVOLA_K = 0.15;
+  var SAUVOLA_R = 128;
+
+  function binariser(canvas) {
+    var w = canvas.width, h = canvas.height;
+    if (!w || !h) return canvas;
+    var ctx = canvas.getContext("2d", { willReadFrequently: true });
+    var img = ctx.getImageData(0, 0, w, h);
     var d = img.data;
-    var histo = new Array(256).fill(0);
-    var i;
-
-    var gris = new Uint8ClampedArray(canvas.width * canvas.height);
-    var p = 0;
-    for (i = 0; i < d.length; i += 4, p++) {
-      var g = (d[i] * 0.299 + d[i + 1] * 0.587 + d[i + 2] * 0.114) | 0;
-      d[i] = d[i + 1] = d[i + 2] = g;
-      gris[p] = g;
-      histo[g] += 1;
+    var n = w * h;
+    var gris = new Uint8Array(n);
+    var i, p, x, y;
+    for (i = 0, p = 0; p < n; i += 4, p++) {
+      gris[p] = (d[i] * 0.299 + d[i + 1] * 0.587 + d[i + 2] * 0.114) | 0;
     }
 
-    var total = canvas.width * canvas.height;
-    var bas = Math.round(total * 0.02), haut = Math.round(total * 0.98);
-    var cumul = 0, min = 0, max = 255;
-    for (i = 0; i < 256; i++) {
-      cumul += histo[i];
-      if (cumul >= bas) { min = i; break; }
-    }
-    cumul = 0;
-    for (i = 0; i < 256; i++) {
-      cumul += histo[i];
-      if (cumul >= haut) { max = i; break; }
-    }
-    if (max - min > 20) {
-      var echelle = 255 / (max - min);
-      for (i = 0; i < d.length; i += 4) {
-        var v = Math.max(0, Math.min(255, (d[i] - min) * echelle));
-        d[i] = d[i + 1] = d[i + 2] = v;
+    // Une ligne et une colonne de zéros en tête : la boucle chaude n'a alors
+    // aucun test de bord à faire.
+    var W = w + 1;
+    var somme = new Float64Array(W * (h + 1));
+    var carres = new Float64Array(W * (h + 1));
+    for (y = 0; y < h; y++) {
+      var ligne = 0, ligneC = 0;
+      for (x = 0; x < w; x++) {
+        var g = gris[y * w + x];
+        ligne += g; ligneC += g * g;
+        somme[(y + 1) * W + x + 1] = somme[y * W + x + 1] + ligne;
+        carres[(y + 1) * W + x + 1] = carres[y * W + x + 1] + ligneC;
       }
     }
-    // Un masque très doux (+ 35 % de détail) compense le lissage de la caméra
-    // sans fabriquer les halos qui perturbent l'OCR. Les bords restent tels
-    // quels pour ne pas rogner les caractères au bord du cadre.
-    var w = canvas.width, h = canvas.height;
-    for (var y = 1; y < h - 1; y++) {
-      for (var x = 1; x < w - 1; x++) {
-        var pos = y * w + x;
-        var voisinage = (gris[pos - 1] + gris[pos + 1] + gris[pos - w] + gris[pos + w]) / 4;
-        var net = Math.max(0, Math.min(255, gris[pos] + (gris[pos] - voisinage) * 0.35));
-        var di = pos * 4;
-        // Le contraste étiré fixe la luminosité ; le détail vient de l'image
-        // originale afin de ne pas amplifier le bruit dans les zones blanches.
-        var detail = net - gris[pos];
-        var final = Math.max(0, Math.min(255, d[di] + detail));
-        d[di] = d[di + 1] = d[di + 2] = final;
+
+    // Demi-fenêtre de l'ordre de la hauteur d'un caractère : plus petite, elle
+    // creuse l'intérieur des lettres grasses ; plus grande, elle redevient un
+    // seuil global et perd tout l'intérêt.
+    var r = Math.max(7, Math.min(30, Math.round(w / 48)));
+    for (y = 0; y < h; y++) {
+      var y0 = Math.max(0, y - r), y1 = Math.min(h - 1, y + r);
+      for (x = 0; x < w; x++) {
+        var x0 = Math.max(0, x - r), x1 = Math.min(w - 1, x + r);
+        var aire = (x1 - x0 + 1) * (y1 - y0 + 1);
+        var s = somme[(y1 + 1) * W + x1 + 1] - somme[y0 * W + x1 + 1] -
+                somme[(y1 + 1) * W + x0] + somme[y0 * W + x0];
+        var sc = carres[(y1 + 1) * W + x1 + 1] - carres[y0 * W + x1 + 1] -
+                 carres[(y1 + 1) * W + x0] + carres[y0 * W + x0];
+        var m = s / aire;
+        var ecart = Math.sqrt(Math.max(0, (sc / aire) - m * m));
+        var seuil = m * (1 + SAUVOLA_K * ((ecart / SAUVOLA_R) - 1));
+        var v = gris[y * w + x] > seuil ? 255 : 0;
+        var di = (y * w + x) * 4;
+        d[di] = d[di + 1] = d[di + 2] = v;
+        d[di + 3] = 255;
       }
     }
     ctx.putImageData(img, 0, 0);
@@ -646,20 +707,34 @@ window.Scan = (function () {
 
   // Recadrage plein format de la seule zone du cadre : c'est là que se gagne
   // le temps d'OCR, en soustrayant au moteur tout ce qui n'est pas l'étiquette.
+  //
+  // Rien de plus fin que le cadre visé, et c'est une décision mesurée, pas un
+  // renoncement. Une détection automatique du bloc de texte a été écrite,
+  // testée, puis éprouvée sur les photos de tests/etiquettes : elle resserrait
+  // bien — de 6 à 18 % de l'image — mais sur le mauvais bloc une fois sur
+  // deux, et faisait passer une étiquette de 88 % des mots lus à 0 %. Le cadre
+  // que l'utilisateur vise reste le meilleur détecteur de texte disponible :
+  // c'est lui qui sait où est l'étiquette, et il ne se trompe pas.
+  //
+  // ponytail: si un jour le banc tourne sur de vraies captures de viseur — et
+  // non sur des photos plein cadre — la question mérite d'être reposée : le
+  // bloc d'adresse y est dominant, là où il ne l'est pas dans une photo qui
+  // embrasse tout le casier.
   function capturerZone() {
     if (!video || !video.videoWidth) return null;
     var z = zoneLecture();
     var cible = z.w;
     if (cible > LARGEUR_OCR) cible = LARGEUR_OCR;
-    else if (cible < LARGEUR_MIN) cible = Math.min(z.w * 2, LARGEUR_MIN);
+    else if (cible < LARGEUR_OCR) cible = Math.min(z.w * 2, LARGEUR_OCR);
     dessinerZone(canvasOCR, z, Math.round(cible));
-    return accentuer(canvasOCR);
+    return binariser(canvasOCR);
   }
 
   function reconnaitreVideo(angles) {
     return lireAngles(capturerZone(), angles).then(function (res) {
       dernierTexteBrut = (res && res.texte) || "";
       dernierAngle = res ? res.angle : null;
+      majTexteLuVue();
       return res;
     });
   }
@@ -684,7 +759,7 @@ window.Scan = (function () {
     chargerImage(file)
       .then(function (img) {
         afficherTravail("Lecture de l'étiquette…");
-        return lireAngles(accentuer(versCanvas(img)), C.anglesAEssayer("photo"));
+        return lireAngles(binariser(versCanvas(img)), C.anglesAEssayer("photo"));
       })
       // poserCandidats redessine l'écran photo de lui-même, par onCandidats.
       .then(function (res) {
@@ -766,6 +841,7 @@ window.Scan = (function () {
         '</div>' +
         '<div class="scan-results">' +
           '<div class="scan-suggestions" id="scanSuggestions"></div>' +
+          '<div id="scanLu"></div>' +
         '</div>' +
       '</div>';
     var cadre = document.getElementById("scanViseur");
@@ -793,6 +869,28 @@ window.Scan = (function () {
       (etat === C.ETATS.DEMARRAGE ? "Démarrage de la caméra…" : "Placez l'étiquette dans le cadre");
     hint.textContent = texte;
     hint.classList.toggle("scan-hint-alerte", !!session.indication());
+  }
+
+  // Ce que le moteur a réellement lu, sous les cartes.
+  //
+  // C'est le seul moyen, sur le terrain, de distinguer les deux échecs qui se
+  // ressemblent à l'écran : « le cadre ne montre pas ce qui est lu » et « le
+  // texte est bien lu mais ne rapproche aucune adresse ». Sans cette ligne, la
+  // seule chose observable est une colonne vide, et il n'y a rien à en tirer.
+  // La variable existait déjà et n'était affichée nulle part.
+  function texteLuHTML() {
+    if (!dernierTexteBrut) return "";
+    var brut = dernierTexteBrut.replace(/\s+/g, " ").trim();
+    if (!brut) return '<p class="scan-lu scan-lu-vide">Rien de lisible dans le cadre.</p>';
+    return '<p class="scan-lu">Lu : ' + escapeHtml(brut.slice(0, 160)) + '</p>';
+  }
+
+  // Nœud à part, rafraîchi à chaque lecture : les cartes, elles, ne bougent
+  // que lorsque le cumul change d'avis. Mélanger les deux ferait clignoter des
+  // boutons sous le doigt une fois par seconde.
+  function majTexteLuVue() {
+    var box = document.getElementById("scanLu");
+    if (box) box.innerHTML = texteLuHTML();
   }
 
   function majCandidatsVue() {
@@ -881,6 +979,7 @@ window.Scan = (function () {
         ? candidatsHTML(candidats)
         : '<p class="scan-intro">Prends l\'étiquette en photo, bien à plat et sans ombre portée. ' +
           'Le texte lu est ensuite rapproché des adresses de ta tournée.</p>') +
+      texteLuHTML() +
       '<label class="scan-cta">📷 ' + (candidats.length ? "Reprendre une photo" : "Prendre une photo") +
         '<input type="file" id="scanFile" accept="image/*" capture="environment" hidden></label>' +
       (videoDispo

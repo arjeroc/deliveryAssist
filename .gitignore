@@ -6,3 +6,12 @@
 Thumbs.db
 desktop.ini
 *~
+
+# Le banc d'essai et ses données ne quittent pas le poste.
+#
+# Ce dépôt est public, et tout ce dossier parle de courrier réel : les photos
+# d'étiquettes, les attendus qui les décrivent, et jusqu'aux jeux d'essai du
+# rapprochement, qui portent des patronymes et des lieux-dits de personnes
+# bien vivantes. Les suites de tests se lancent depuis le poste — voir
+# tests/README.md — et n'ont aucune raison d'être publiées.
+tests/

@@ -12,7 +12,7 @@
      1. la machine à états      — ce que l'écran a le droit de devenir ;
      2. la cadence              — quand une reconnaissance peut partir ;
      3. la qualité d'image      — si cette image-là mérite qu'on la lise ;
-     4. les candidats           — quand remplacer les cartes affichées ;
+     4. les candidats           — ce que plusieurs lectures, cumulées, disent ;
      5. l'attribution           — ce qui s'écrit, et seulement sur validation.
 
    La session, en bas, les assemble sans jamais toucher au navigateur.
@@ -128,7 +128,10 @@ window.ScanCore = (function () {
   //               qui disent si la main s'est stabilisée.
   // Les seuils sont empiriques et regroupés pour s'ajuster d'un seul endroit.
   // ---------------------------------------------------------------------
-  var SEUILS = { contraste: 16, nettete: 5, mouvement: 7 };
+  // « nouvelle » n'est pas un seuil de qualité mais de rupture : au-delà, ce
+  // n'est plus la même scène, donc plus la même étiquette, et tout ce qu'on
+  // avait accumulé sur la précédente doit être oublié.
+  var SEUILS = { contraste: 16, nettete: 5, mouvement: 7, nouvelle: 22 };
 
   function statsZone(data, largeur, hauteur, pas) {
     pas = pas || 1;
@@ -239,16 +242,31 @@ window.ScanCore = (function () {
   }
 
   // Stratégie d'orientation. La photo est ponctuelle : on peut se payer les
-  // quatre angles. En vidéo, l'image est déjà redressée lors de la capture
-  // (scan.js) pour correspondre au cadre vu. Relancer l'OCR à 90° après un
-  // échec double la latence sans aider un smartphone Android récent ; ce repli
-  // est donc réservé au mode photo.
+  // quatre angles.
+  //
+  // En vidéo, l'image arrive déjà redressée par la capture (scan.js) pour
+  // correspondre au cadre vu, et c'est vrai tant que le redressement est
+  // juste. Quand il ne l'est pas — verrou paysage refusé, pivot deviné à
+  // l'envers, téléphone tenu autrement que prévu — le texte arrive couché et
+  // le moteur ne rend strictement rien. Mesuré sur une étiquette réelle : 0 %
+  // des mots attendus à 0°, 88 % à 270°. C'est exactement le « rien ne
+  // s'affiche » du terrain, et aucune quantité de bonne binarisation n'en
+  // sauve quoi que ce soit.
+  //
+  // Le repli est donc rétabli, mais il ne se paie pas tant que ça marche :
+  // tant qu'une lecture rend quelque chose, on ne tente que 0°. C'est
+  // seulement après plusieurs lectures muettes d'affilée — quand la latence
+  // n'a plus rien à protéger, puisque rien ne sort — que les autres angles
+  // s'ajoutent. lireAngles s'arrête au premier résultat franc, donc le
+  // surcoût réel reste d'un passage la plupart du temps.
   var ANGLES_PHOTO = [0, 90, 270, 180];
-  var ANGLES_SECOURS = [90, 270, 180];
+  var ANGLES_SECOURS = [0, 270, 90];
+  var VIDES_AVANT_SECOURS = 3;
 
   function anglesAEssayer(mode, angleRetenu, essaisVides) {
     if (mode === "photo") return ANGLES_PHOTO.slice();
-    return [0];
+    if ((essaisVides || 0) >= VIDES_AVANT_SECOURS) return ANGLES_SECOURS.slice();
+    return [angleRetenu || 0];
   }
 
   // ---------------------------------------------------------------------
@@ -258,28 +276,70 @@ window.ScanCore = (function () {
     return (liste || []).map(function (c) { return (c && c.row) ? c.row.id : ""; }).join("|");
   }
 
-  function scoreTete(liste) {
-    return (liste && liste[0] && liste[0].score) || 0;
-  }
+  // Le cumul entre images.
+  //
+  // Une image de vidéo, seule, est un témoignage médiocre : un mot manqué, une
+  // ligne coupée par le cadre, et l'adresse juste n'apparaît nulle part. Mais
+  // le viseur en livre trois ou quatre par étiquette, et ces témoignages se
+  // recoupent. On les additionne donc au lieu de les mettre en concurrence :
+  // chaque lecture ajoute ses points, les lectures anciennes s'effacent
+  // doucement, et l'adresse qui revient l'emporte sur celle qui n'est passée
+  // qu'une fois.
+  //
+  // C'est ce cumul qui remplace l'ancien jeu de confirmations : il n'y a plus
+  // à compter combien de fois une proposition écartée insiste, puisqu'une
+  // proposition qui insiste voit son total monter d'elle-même. Et une lecture
+  // vide n'est plus ignorée : elle vaut témoignage contraire, et fait pâlir ce
+  // qui est affiché au lieu de le figer.
+  //
+  // ponytail: amortissement fixe ; une pondération par la qualité de l'image
+  // serait meilleure, à faire le jour où les seuils de netteté sont calibrés
+  // sur de vraies étiquettes.
+  // 0,7 : assez lent pour qu'une lecture franche ne soit pas détrônée par la
+  // lecture médiocre qui la suit — c'était le défaut d'un amortissement plus
+  // vif, où la dernière image gagnait toujours — et assez rapide pour que
+  // deux lectures concordantes reprennent la main en deux secondes. Ce qui
+  // efface vraiment, ce n'est pas l'oubli mais la rupture de scène.
+  var OUBLI = 0.7;           // ce qui reste d'un cumul à la lecture suivante
+  var OUBLI_PLANCHER = 0.5;  // en deçà, l'adresse sort de la liste
 
-  // Une lecture vide ne chasse jamais des cartes déjà affichées, et une lecture
-  // moins convaincante non plus : entre deux images, le doigt bouge, et une
-  // liste qui clignote ne se lit pas. On ne remplace que sur du neuf, et sur du
-  // meilleur.
-  function doitRemplacer(anciens, nouveaux) {
-    if (!nouveaux || !nouveaux.length) return false;
-    if (!anciens || !anciens.length) return true;
-    if (idsDe(anciens) === idsDe(nouveaux)) return false;
-    return scoreTete(nouveaux) >= scoreTete(anciens);
+  function creerCumul(opts) {
+    opts = opts || {};
+    var oubli = (opts.oubli == null) ? OUBLI : opts.oubli;
+    var plancher = (opts.plancher == null) ? OUBLI_PLANCHER : opts.plancher;
+    var limite = opts.limite || 5;
+    var scores = {};
+    var lignes = {};
+
+    function classement() {
+      return Object.keys(scores)
+        .sort(function (a, b) { return scores[b] - scores[a]; })
+        .slice(0, limite)
+        .map(function (id) {
+          return { row: lignes[id].row, score: scores[id], touches: lignes[id].touches };
+        });
+    }
+
+    return {
+      vider: function () { scores = {}; lignes = {}; },
+      classement: classement,
+      ajouter: function (candidats) {
+        Object.keys(scores).forEach(function (k) {
+          scores[k] *= oubli;
+          if (scores[k] < plancher) { delete scores[k]; delete lignes[k]; }
+        });
+        (candidats || []).forEach(function (c) {
+          if (!c || !c.row) return;
+          scores[c.row.id] = (scores[c.row.id] || 0) + (c.score || 0);
+          lignes[c.row.id] = c;
+        });
+        return classement();
+      }
+    };
   }
 
   // Deux têtes trop proches : on n'en désigne aucune. Seuil et calcul repris
   // tels quels du scan photo, pour que les deux modes jugent pareil.
-  // Nombre de lectures concordantes qu'il faut pour renverser une proposition
-  // mieux notée. Deux : une seconde d'attente, et l'hésitation d'une lecture
-  // isolée ne suffit plus à faire danser les cartes.
-  var CONFIRMATIONS = 2;
-
   function ecartFaible(candidats) {
     return !!(candidats && candidats.length > 1 && candidats[0].score &&
       (candidats[0].score - candidats[1].score) / candidats[0].score < 0.15);
@@ -368,6 +428,7 @@ window.ScanCore = (function () {
     var types = deps.types || [];
     var cadence = deps.cadence || creerCadence({ intervalle: deps.intervalle || 1000 });
     var brouillon = creerBrouillon(types);
+    var cumul = deps.cumul || creerCumul();
 
     var candidats = [];
     var texteLu = "";
@@ -376,8 +437,6 @@ window.ScanCore = (function () {
     var statsPrec = null;
     var angleRetenu = 0;
     var essaisVides = 0;
-    var rejet = "";        // proposition écartée à la lecture précédente
-    var rejetsSuivis = 0;  // combien de fois de suite elle est revenue
 
     var machine = creerMachine(function (etat, avant, info) {
       if (deps.onEtat) deps.onEtat(etat, avant, info);
@@ -427,41 +486,40 @@ window.ScanCore = (function () {
     function poser(liste, texte) {
       candidats = liste;
       texteLu = texte || "";
-      rejet = "";
-      rejetsSuivis = 0;
       if (deps.onCandidats) deps.onCandidats(candidats, texteLu);
     }
 
     function appliquerLecture(res) {
       // Le lecteur a pu qualifier lui-même : c'est ainsi qu'il départage deux
       // orientations. On ne requalifie pas ce qu'il a déjà jaugé.
-      var nouveaux = (res.candidats ||
+      var lus = (res.candidats ||
         (deps.qualifier ? deps.qualifier(res.texte || "") : [])) || [];
-      if (nouveaux.length) { angleRetenu = res.angle || 0; essaisVides = 0; }
+      if (lus.length) { angleRetenu = res.angle || 0; essaisVides = 0; }
       else { essaisVides += 1; }
 
-      if (doitRemplacer(candidats, nouveaux)) { poser(nouveaux, res.texte); return; }
-      if (!nouveaux.length) return;
-
-      var ids = idsDe(nouveaux);
-      if (ids === idsDe(candidats)) { rejet = ""; rejetsSuivis = 0; return; }
-
-      // Insister vaut confirmation. Sans cette clause, la première lecture
-      // convaincante gèlerait les cartes pour de bon : l'étiquette suivante,
-      // moins bien lue, ne repasserait jamais devant elle — et l'utilisateur
-      // croirait le scan arrêté. Deux lectures de suite qui disent la même
-      // autre chose, c'est l'étiquette qui a changé, pas le moteur qui hésite.
-      rejetsSuivis = (ids === rejet) ? rejetsSuivis + 1 : 1;
-      rejet = ids;
-      if (rejetsSuivis >= CONFIRMATIONS) poser(nouveaux, res.texte);
+      // Le classement affiché est celui du cumul, jamais celui d'une lecture
+      // isolée : c'est toute la différence entre une liste qui clignote au
+      // gré des hésitations du moteur et une liste qui se précise.
+      var classement = cumul.ajouter(lus);
+      if (idsDe(classement) === idsDe(candidats)) return;
+      poser(classement, res.texte);
     }
 
     // Un tour de boucle vidéo : la qualité d'abord, la cadence ensuite, l'OCR
     // en dernier. Renvoie la promesse de lecture, ou null si ce tour n'a rien
     // déclenché — ce qui est le cas le plus fréquent, et c'est voulu.
+    //
+    // C'est aussi ici qu'on voit passer l'étiquette suivante : un écart
+    // d'empreinte franc, et ce n'est plus la même scène. Tout ce qu'on avait
+    // accumulé portait sur l'enveloppe précédente ; le garder afficherait
+    // l'adresse du colis d'avant sur celui qu'on tient.
     function evaluerFrame(stats) {
+      var seuils = deps.seuils || SEUILS;
+      var rupture = statsPrec && stats &&
+        ecartEmpreinte(stats.empreinte, statsPrec.empreinte) > (seuils.nouvelle || SEUILS.nouvelle);
       var q = qualiteFrame(stats, statsPrec, deps.seuils);
       statsPrec = stats || null;
+      if (rupture && candidats.length) { cumul.vider(); poser([], ""); }
       if (!q.utilisable) { majIndication(q.indication); return q; }
       majIndication("");
       return q;
@@ -492,8 +550,11 @@ window.ScanCore = (function () {
     }
 
     // Résultat d'un cliché : là, l'utilisateur a explicitement demandé une
-    // nouvelle lecture. Elle remplace l'affichage, même si elle ne donne rien.
+    // nouvelle lecture. Elle remplace l'affichage, même si elle ne donne rien
+    // — et elle repart de zéro : un cliché n'a rien à cumuler avec le
+    // précédent, c'est une autre étiquette qu'on a voulu photographier.
     function poserCandidats(liste, texte) {
+      cumul.vider();
       poser(liste || [], texte);
     }
 
@@ -523,8 +584,7 @@ window.ScanCore = (function () {
       adresseId = null;
       candidats = [];
       texteLu = "";
-      rejet = "";
-      rejetsSuivis = 0;
+      cumul.vider();
       brouillon.vider();
       return demarrer();
     }
@@ -552,8 +612,7 @@ window.ScanCore = (function () {
       arreterAcquisition("photo");
       candidats = [];
       texteLu = "";
-      rejet = "";
-      rejetsSuivis = 0;
+      cumul.vider();
       return machine.aller(ETATS.PHOTO);
     }
 
@@ -561,8 +620,7 @@ window.ScanCore = (function () {
       arreterAcquisition("fermeture");
       candidats = [];
       texteLu = "";
-      rejet = "";
-      rejetsSuivis = 0;
+      cumul.vider();
       adresseId = null;
       indication = "";
       angleRetenu = 0;
@@ -611,7 +669,7 @@ window.ScanCore = (function () {
     rectCapture: rectCapture,
     rectCaptureOriente: rectCaptureOriente,
     anglesAEssayer: anglesAEssayer,
-    doitRemplacer: doitRemplacer,
+    creerCumul: creerCumul,
     ecartFaible: ecartFaible,
     creerBrouillon: creerBrouillon,
     appliquerAttribution: appliquerAttribution,

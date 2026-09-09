@@ -3089,8 +3089,8 @@ window.UI = (function () {
         '<option value="photo"' + (s.scanModeCapture === "photo" ? " selected" : "") + '>Photo — déclenchement manuel</option></select>' +
         '<div class="range-row">' +
           '<label for="admScanIntervalle">Fréquence de recherche du scan (<span id="admScanIntervalleValeur">' +
-            (s.scanIntervalleMs || 700) + '</span>&nbsp;ms entre deux lectures)</label>' +
-          '<input type="range" id="admScanIntervalle" min="400" max="1500" step="50" value="' + (s.scanIntervalleMs || 700) + '">' +
+            (s.scanIntervalleMs || 300) + '</span>&nbsp;ms entre deux lectures)</label>' +
+          '<input type="range" id="admScanIntervalle" min="200" max="1500" step="50" value="' + (s.scanIntervalleMs || 300) + '">' +
         '</div>' +
         '<label class="switch-row"><input type="checkbox" id="admScanPivot" ' + (s.scanPivotInverse ? "checked" : "") + '> Inverser le sens de rotation de l\'écran de scan (téléphone verrouillé en portrait)</label>' +
         '<label class="switch-row"><input type="checkbox" id="admFleches" ' + (s.flechesSens !== false ? "checked" : "") + '> Flèches de sens sur la trace (au zoom rapproché)</label>' +

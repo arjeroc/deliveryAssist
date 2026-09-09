@@ -946,3 +946,10 @@ hr{border:none;border-top:1px solid var(--line);margin:14px 0;}
 .toast.err{background:var(--err);}
 .toast.ok{background:var(--accent);}
 .toast.warn{background:var(--warn);}
+
+/* Ce que le moteur a lu, sous les propositions. Volontairement discret et
+   tronqué : c'est un témoin de diagnostic, pas une information de travail —
+   mais sans lui, un viseur qui ne propose rien est indéchiffrable. */
+.scan-lu{margin:8px 0 0;padding:6px 8px;border-radius:6px;background:rgba(0,0,0,.28);
+  color:var(--muted);font-size:11px;line-height:1.35;word-break:break-word;}
+.scan-lu-vide{font-style:italic;}

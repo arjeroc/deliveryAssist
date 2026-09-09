@@ -46,7 +46,7 @@ window.Store = (function () {
       // Réglable dans les réglages avancés : plus bas, la détection est plus
       // réactive ; la cadence (scan-core.js) empêche de toute façon deux
       // lectures de se chevaucher.
-      scanIntervalleMs: 700,
+      scanIntervalleMs: 300,
       // Mode de capture : vidéo analyse le viseur en continu ; photo attend le
       // déclencheur posé sur le viseur et ne lit qu'à ce moment-là.
       scanModeCapture: "video",
@@ -1206,11 +1206,18 @@ window.Store = (function () {
   // est pas une. Cette table sert au scan, quand une étiquette mal lue ne rend
   // qu'un seul mot exploitable.
   var freqNoms = {};
+  // Le même comptage, mais tous champs confondus : combien d'adresses portent
+  // ce mot, où qu'il soit. C'est ce qui distingue un mot qui désigne d'un mot
+  // qui décore. Sur une tournée rurale, la commune et le code postal figurent
+  // sur les 400 lignes : ils ne renseignent rien, et pourtant ils marquaient
+  // autant de points qu'un patronyme unique.
+  var freqTokens = {};
 
   function invalidateIndex() { searchIndex = null; }
 
   function buildIndex() {
     freqNoms = {};
+    freqTokens = {};
     searchIndex = state.rows.map(function (r) {
       var noms = contentTokens(tokenize(namesOf(r).join(" ")));
       var vus = {};
@@ -1219,30 +1226,55 @@ window.Store = (function () {
         vus[t] = 1;                   // ne fait qu'une adresse
         freqNoms[t] = (freqNoms[t] || 0) + 1;
       });
-      return {
-        row: r,
-        fields: {
-          noms: noms,
-          numero: tokenize(r.numero),
-          rue: contentTokens(tokenize(r.rue)),
-          lieuDit: contentTokens(tokenize(r.lieu_dit)),
-          commune: contentTokens(tokenize(r.commune)),
-          codePostal: tokenize(r.code_postal)
-        }
+      var fields = {
+        noms: noms,
+        numero: tokenize(r.numero),
+        rue: contentTokens(tokenize(r.rue)),
+        lieuDit: contentTokens(tokenize(r.lieu_dit)),
+        commune: contentTokens(tokenize(r.commune)),
+        codePostal: tokenize(r.code_postal)
       };
+      var vusTous = {};
+      Object.keys(fields).forEach(function (f) {
+        fields[f].forEach(function (t) {
+          if (vusTous[t]) return;
+          vusTous[t] = 1;
+          freqTokens[t] = (freqTokens[t] || 0) + 1;
+        });
+      });
+      return { row: r, fields: fields };
     });
     return searchIndex;
+  }
+
+  // Rareté d'un mot dans la tournée, bornée pour rester à l'échelle des poids
+  // de champs : un mot présent partout ne vaut plus qu'un tiers de sa valeur,
+  // un mot porté par une seule adresse la triple. Les bornes comptent autant
+  // que la formule — sans elles, une base de 400 lignes ferait varier le score
+  // d'un facteur vingt et les seuils calibrés ailleurs (lectureFranche,
+  // ecartFaible) ne voudraient plus rien dire.
+  var IDF_MIN = 0.3, IDF_MAX = 3;
+
+  function rarete(token) {
+    var n = (searchIndex || []).length;
+    if (!n) return 1;
+    var v = Math.log(1 + n / (1 + (freqTokens[token] || 0)));
+    return Math.max(IDF_MIN, Math.min(IDF_MAX, v));
   }
 
   function getIndex() { return searchIndex || buildIndex(); }
 
   // Meilleur score obtenu par un token de requête sur l'ensemble des champs.
+  //
+  // La rareté se prend sur le mot *indexé*, jamais sur celui de la requête :
+  // un mot mal lu par l'OCR est absent de la base, donc rare par accident, et
+  // le pondérer là-dessus reviendrait à récompenser la faute de lecture.
   function scoreTokenAgainstEntry(queryToken, entry) {
     var best = 0;
     Object.keys(entry.fields).forEach(function (field) {
       var weight = FIELD_WEIGHTS[field];
       entry.fields[field].forEach(function (indexedToken) {
-        var s = tokenMatchScore(queryToken, indexedToken) * weight;
+        var s = tokenMatchScore(queryToken, indexedToken) * weight * rarete(indexedToken);
         if (s > best) best = s;
       });
     });
