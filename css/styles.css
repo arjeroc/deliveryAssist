@@ -274,7 +274,6 @@ mark{background:#fff2a8;color:inherit;border-radius:3px;padding:0 1px;}
    brune et non verte — pour qu'on voie en une fraction de seconde qu'on ne lit
    pas la même chose. */
 .tournee-card.zone-standard{background:#fbfbfa;}
-.zone-nav{margin-left:auto;flex:0 0 auto;}
 
 .std-bloc{
   margin-top:12px;background:#fbf7ee;
@@ -305,6 +304,13 @@ mark{background:#fff2a8;color:inherit;border-radius:3px;padding:0 1px;}
   min-width:34px;min-height:32px;display:inline-flex;align-items:center;justify-content:center;
 }
 .std-num.sans-numero{color:var(--muted);font-style:italic;}
+.std-itin-hint{
+  margin:10px 0 0;padding:8px 10px;border-radius:8px;
+  background:var(--info-bg);border:1px solid #c8ddef;color:var(--info);
+  font-size:13px;font-weight:700;
+}
+.std-numeros.en-itineraire .std-num{border-color:var(--info);box-shadow:0 0 0 1px var(--info) inset;}
+.std-numeros.en-itineraire .std-num.is-distribue{text-decoration:none;}
 .std-num.is-distribue{background:#e9f4ee;border-color:#bcdcc9;color:var(--accent);text-decoration:line-through;}
 .std-num.is-abandonne{background:var(--err-bg);border-color:#eec5c0;color:var(--err);}
 
@@ -316,6 +322,8 @@ mark{background:#fff2a8;color:inherit;border-radius:3px;padding:0 1px;}
 .std-btn.ok{flex:2;background:#7a5c2e;border:1px solid #7a5c2e;color:#fff;}
 .std-btn.stop{color:var(--warn);}
 .std-btn.reopen{color:var(--muted);border-style:solid;border-color:var(--line);}
+.std-btn.itin{flex:0 0 auto;padding:12px 12px;border-style:solid;border-color:var(--line);}
+.std-btn.itin.active{background:var(--info-bg);border-color:var(--info);color:var(--info);}
 .std-btn:active{opacity:.85;}
 
 /* --- doublon d'adresse détecté à la saisie --- */
@@ -375,6 +383,15 @@ mark{background:#fff2a8;color:inherit;border-radius:3px;padding:0 1px;}
    et vue verrouillée --- */
 .tournee-finale .tournee-card-title{font-size:17px;}
 .tournee-finale-recap,.cloture-recap{margin:6px 0 4px;}
+.cloture-note{margin-top:12px;}
+.cloture-note-toggle{
+  width:100%;padding:10px 0;border:none;background:none;text-align:left;
+  font-family:inherit;font-size:14px;font-weight:700;color:var(--accent);cursor:pointer;
+}
+.cloture-note textarea{
+  width:100%;margin-top:6px;padding:10px;border:1px solid var(--line);border-radius:10px;
+  font-family:inherit;font-size:14px;resize:vertical;background:var(--card);color:var(--ink);
+}
 .cloture-btn{
   width:100%;margin-top:14px;padding:14px;border-radius:10px;border:none;
   background:var(--accent);color:#fff;font-weight:800;font-size:15px;cursor:pointer;
@@ -653,6 +670,9 @@ details.advanced summary{font-size:12.5px;color:var(--accent);cursor:pointer;fon
 }
 .scan-candidat:active{background:#eef1ec;}
 .scan-candidat.probable{border-color:var(--accent);border-width:2px;}
+/* Pendant l'attribution, le volet ne redit plus l'adresse : c'est cette carte,
+   et elle seule, qui porte « voilà celle que tu as choisie ». */
+.scan-candidat.retenue{border-color:var(--accent);border-width:2px;background:#e6f2ea;}
 .scan-candidat-nom{display:block;font-size:15.5px;font-weight:700;}
 .scan-candidat-adr{display:block;font-size:13px;color:var(--muted);margin-top:3px;}
 .scan-candidat-tag{
@@ -691,12 +711,16 @@ details.advanced summary{font-size:12.5px;color:var(--accent);cursor:pointer;fon
 }
 /* Sortie du scan : rendue à l'image, faute de bandeau. Assez grande pour le
    pouce, assez discrète pour ne pas disputer le cadre. */
+/* Quitter le plein écran : présent sans dominer. La croix est un tracé
+   SVG, pas un glyphe — elle se centre exactement et garde la même épaisseur
+   quelle que soit la police du système. */
 .scan-fermer{
   position:absolute;top:10px;left:10px;z-index:2;
-  width:52px;height:52px;padding:0;border:3px solid #fff;border-radius:50%;
-  background:#d92828;color:#fff;font-size:29px;font-weight:700;line-height:1;cursor:pointer;
-  box-shadow:0 2px 8px rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;
+  width:38px;height:38px;padding:0;border:2px solid rgba(255,255,255,.9);border-radius:50%;
+  background:rgba(30,30,30,.62);color:#fff;line-height:1;cursor:pointer;
+  box-shadow:0 2px 8px rgba(0,0,0,.4);display:flex;align-items:center;justify-content:center;
 }
+.scan-fermer svg{width:19px;height:19px;stroke:currentColor;stroke-width:2.4;stroke-linecap:round;fill:none;}
 .scan-fermer:active{transform:scale(.94);}
 .scan-capture{
   position:absolute;left:50%;bottom:22px;z-index:3;transform:translateX(-50%);
@@ -754,20 +778,12 @@ details.advanced summary{font-size:12.5px;color:var(--accent);cursor:pointer;fon
   width:min(94%,430px);max-height:94%;overflow:auto;background:var(--bg);
   border-radius:16px;padding:14px;box-shadow:0 8px 28px rgba(0,0,0,.46);
 }
-.scan-attribution-panel .scan-titre{margin-bottom:8px;}
-.scan-attribution-panel .scan-adresse{padding:10px;margin-bottom:8px;}
-.scan-attribution-panel .scan-deja{margin-bottom:8px;}
+.scan-attribution-panel .scan-deja{margin:0 2px 8px;}
 .scan-attribution-panel .scan-attrib{margin-bottom:10px;}
 .scan-attribution-panel .stepper-row{padding:7px 0;}
 .scan-attribution-panel .scan-valider{padding:13px;}
 
 /* --- scan : attribution des objets suivis --- */
-.scan-adresse{
-  display:block;background:var(--card);border:2px solid var(--accent);
-  border-radius:12px;padding:14px;margin-bottom:10px;
-}
-.scan-adresse-nom{display:block;font-size:16px;font-weight:700;}
-.scan-adresse-ligne{display:block;font-size:13.5px;color:var(--muted);margin-top:2px;}
 .scan-deja{margin:0 2px 12px;font-size:12.5px;color:var(--muted);}
 .scan-attrib{
   background:var(--card);border:1px solid var(--line);border-radius:12px;

@@ -790,7 +790,9 @@ window.Scan = (function () {
     var noms = window.Store.namesOf(row).join(" / ") || "(sans nom)";
     var adresse = [row.numero, row.rue].filter(Boolean).join(" ");
     var lieu = window.Store.communeLabelOf(row);
-    return '<button type="button" class="scan-candidat' + (premier && !ecartFaible ? " probable" : "") + '" ' +
+    var retenue = session && session.adresseId() === row.id;
+    return '<button type="button" class="scan-candidat' + (premier && !ecartFaible ? " probable" : "") +
+      (retenue ? " retenue" : "") + '" ' +
       'data-action="scan-pick" data-id="' + row.id + '">' +
       '<span class="scan-candidat-nom">' + escapeHtml(noms) + '</span>' +
       '<span class="scan-candidat-adr">' + escapeHtml([adresse, lieu].filter(Boolean).join(" · ")) + '</span>' +
@@ -833,7 +835,12 @@ window.Scan = (function () {
           '<div class="scan-cadre" aria-hidden="true"></div>' +
           '<div class="scan-hint" id="scanHint"></div>' +
           '<button type="button" class="scan-fermer" data-action="scan-close" ' +
-            'aria-label="Fermer le scan"><span>✕</span></button>' +
+            'aria-label="Quitter le scan" title="Quitter">' +
+            // Croix tracée, pas un glyphe : ✕ se dessine différemment d'une
+            // police à l'autre et se centre mal dans une pastille.
+            '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">' +
+              '<path d="M6 6 L18 18 M18 6 L6 18"/>' +
+            '</svg></button>' +
           (modeCapture() === "photo"
             ? '<button type="button" class="scan-capture" data-action="scan-capture" ' +
                 'aria-label="Prendre la photo">📷</button>'
@@ -902,17 +909,6 @@ window.Scan = (function () {
       : '<p class="scan-attente">Les adresses possibles s\'afficheront ici.</p>';
   }
 
-  function adresseCarteHTML(row) {
-    var noms = window.Store.namesOf(row).join(" / ") || "(sans nom)";
-    var rue = [row.numero, row.rue].filter(Boolean).join(" ");
-    var lieu = window.Store.communeLabelOf(row);
-    return '<div class="scan-adresse">' +
-      '<span class="scan-adresse-nom">' + escapeHtml(noms) + '</span>' +
-      (rue ? '<span class="scan-adresse-ligne">' + escapeHtml(rue) + '</span>' : "") +
-      (lieu ? '<span class="scan-adresse-ligne">' + escapeHtml(lieu) + '</span>' : "") +
-    '</div>';
-  }
-
   // Les catégories dans l'ordre du scan, sans jamais en perdre une : celles
   // que ORDRE_ATTRIBUTION ne connaît pas suivent, telles que Prep les déclare.
   function typesAttribution() {
@@ -947,10 +943,12 @@ window.Scan = (function () {
       overlay.className = "scan-attribution-overlay";
       viseur.appendChild(overlay);
     }
+    // La colonne de droite montre déjà l'adresse retenue, surlignée : la
+    // répéter ici n'ajoutait rien et repoussait « Ajouter à la tournée »
+    // sous le pli. Le volet ne garde que les gestes.
+    majCandidatsVue();
     overlay.innerHTML =
       '<div class="scan-attribution-panel">' +
-      '<div class="scan-titre">Adresse sélectionnée</div>' +
-      adresseCarteHTML(row) +
       dejaDansTourneeHTML(row) +
       '<div class="scan-attrib">' +
         typesAttribution().map(function (t) {

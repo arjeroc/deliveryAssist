@@ -1597,17 +1597,6 @@ window.UI = (function () {
     ouvrirItineraire(dest);
   }
 
-  // Itinéraire vers une zone : on vise sa première adresse localisée, à défaut
-  // le nom de la rue.
-  function naviguerVersZone(key) {
-    var g = findGroup(key);
-    if (!g) return;
-    if (g.ancreId) { naviguerVers(g.ancreId); return; }
-    var dest = [g.rue, g.commune].filter(Boolean).join(" ");
-    if (!dest) { toast("Cette zone n'a pas de libellé exploitable.", "warn"); return; }
-    ouvrirItineraire(dest);
-  }
-
   function refreshSuiviAfterChange() {
     renderSuivi();
   }
@@ -1747,6 +1736,9 @@ window.UI = (function () {
   // défaut, pour rester compact sur le terrain ; l'état ne survit pas au
   // rechargement, il n'a rien d'une donnée métier.
   var tourneeAddrDepliees = {};
+  // Zone dont le bloc standard attend qu'on désigne un numéro de destination.
+  // Une seule card est à l'écran à la fois : une clé suffit.
+  var stdItineraireKey = "";
 
   // Identité d'une étape de course. La case de casier vient en tête, et ce
   // n'est pas un détail de tri : c'est elle qui fait l'étape.
@@ -1848,11 +1840,6 @@ window.UI = (function () {
       // Le lieu-dit n'étiquette la zone que si toutes ses adresses le partagent.
       var lieux = Object.keys(g.lieuxDits);
       g.lieuDit = (lieux.length === 1 && g.autres + g.items.length > 0) ? lieux[0] : "";
-      // Cible d'itinéraire : la première adresse localisée de la zone.
-      var ancre = g.items.concat(g.standards).map(function (it) { return it.row; })
-        .concat(S.getRows().filter(function (r) { return tourneeGroupKeyOf(r) === g.key; }))
-        .find(function (r) { return S.hasPosition(r); });
-      g.ancreId = ancre ? ancre.id : null;
     });
     return list;
   }
@@ -1978,7 +1965,7 @@ window.UI = (function () {
   // Chaque numéro est son propre bouton de validation : un appui le barre et
   // capte le point GPS courant, sans passer par le bouton groupé de la rue.
   // L'apparence reste strictement celle d'avant — seul le tag change.
-  function stdNumeroHTML(item) {
+  function stdNumeroHTML(item, arme) {
     var num = (item.row.numero || "").trim();
     var etat = item.entry.statut === Prep.STATUTS.DISTRIBUE ? " is-distribue"
              : item.entry.statut === Prep.STATUTS.ABANDONNE ? " is-abandonne" : "";
@@ -1986,13 +1973,22 @@ window.UI = (function () {
       .filter(Boolean).join(" · ") || "Adresse sans numéro";
     return '<button type="button" class="std-num' + (num ? "" : " sans-numero") + etat + '" ' +
       'data-action="std-num-valider" data-id="' + escapeHtml(item.row.id) + '" title="' +
-      escapeHtml(titre) + '">' + escapeHtml(num || "—") + '</button>';
+      escapeHtml((arme ? "Itinéraire vers " : "") + titre) + '">' + escapeHtml(num || "—") + '</button>';
   }
 
   // Même geste que addrValider, sur le registre du courrier standard : un
   // appui valide et capte le relevé GPS, un second appui remet à faire — sans
   // confirmation, exactement comme pour un objet suivi.
   function stdNumValider(addrId) {
+    // Mode itinéraire armé : le numéro ne sert qu'à désigner la destination.
+    // Rien n'est rayé, distribué ni validé — partir vers une boîte n'est pas y
+    // avoir déposé le courrier.
+    if (stdItineraireKey) {
+      stdItineraireKey = "";
+      naviguerVers(addrId);
+      renderSuiviTournee();
+      return;
+    }
     if (tourneeVerrouillee()) return;
     var entry = Prep.getStandardEntry(S.getIdTournee(), addrId);
     if (entry.statut === Prep.STATUTS.DISTRIBUE) {
@@ -2016,6 +2012,9 @@ window.UI = (function () {
     if (!g.standards.length) return "";
     var key = escapeHtml(g.key);
     var etat = stdEtatHTML(g);
+    var arme = stdItineraireKey === g.key;
+    var itinBtn = '<button class="std-btn itin' + (arme ? " active" : "") + '" ' +
+      'data-action="zone-std-itineraire" data-key="' + key + '">🧭 Itinéraire</button>';
     return '<div class="std-bloc' + (g.stdTerminee ? " est-fait" : "") + '">' +
       '<div class="std-entete">' +
         '<span class="std-pastille">📮</span>' +
@@ -2024,12 +2023,17 @@ window.UI = (function () {
         '</div>' +
         '<span class="std-compte">' + g.standards.length + '</span>' +
       '</div>' +
-      '<div class="std-numeros">' + g.standards.map(stdNumeroHTML).join("") + '</div>' +
+      (arme ? '<div class="std-itin-hint">🧭 Sélectionnez un numéro pour lancer l&rsquo;itinéraire.</div>' : "") +
+      '<div class="std-numeros' + (arme ? " en-itineraire" : "") + '">' +
+        g.standards.map(function (it) { return stdNumeroHTML(it, arme); }).join("") +
+      '</div>' +
       (g.stdTerminee
         ? '<div class="std-actions">' +
+            itinBtn +
             '<button class="std-btn reopen" data-action="zone-std-rouvrir" data-key="' + key + '">↺ Rouvrir la distribution</button>' +
           '</div>'
         : '<div class="std-actions">' +
+            itinBtn +
             '<button class="std-btn stop" data-action="zone-std-abandonner" data-key="' + key + '">⊘ Abandonner</button>' +
             '<button class="std-btn ok" data-action="zone-std-valider" data-key="' + key + '">✓ Valider la distribution</button>' +
           '</div>') +
@@ -2042,12 +2046,12 @@ window.UI = (function () {
     if (g.standard) return "";
     if (g.terminee) {
       return '<div class="zone-actions">' +
-        '<button class="zone-btn reopen" data-action="zone-rouvrir" data-key="' + key + '">↺ Rouvrir la zone</button>' +
+        '<button class="zone-btn reopen" data-action="zone-rouvrir" data-key="' + key + '">↺ Rouvrir la distribution</button>' +
       '</div>';
     }
     return '<div class="zone-actions">' +
       '<button class="zone-btn stop" data-action="zone-abandonner" data-key="' + key + '">⊘ Abandonner</button>' +
-      '<button class="zone-btn ok" data-action="zone-valider" data-key="' + key + '">✓ Valider la zone</button>' +
+      '<button class="zone-btn ok" data-action="zone-valider" data-key="' + key + '">✓ Valider la distribution</button>' +
     '</div>';
   }
 
@@ -2099,10 +2103,7 @@ window.UI = (function () {
     typees.concat(standards).forEach(function (it) {
       var row = it.row;
       if (!vusGPS[row.id] && S.hasPosition(row)) { vusGPS[row.id] = true; gpsCount++; }
-      if (!vusNotes[row.id] && row.notes) {
-        vusNotes[row.id] = true;
-        notes.push({ row: row, nouvelle: Prep.estNoteNouvelle(row.id, row.notes) });
-      }
+      if (!vusNotes[row.id] && row.notes) { vusNotes[row.id] = true; notes.push(row); }
       if (it.entry.horodatage) horodatages.push(it.entry.horodatage);
     });
     horodatages.sort();
@@ -2170,9 +2171,34 @@ window.UI = (function () {
       '<div class="sheet-title">Terminer la tournée ?</div>' +
       '<div class="sheet-sub">Vérifie le récapitulatif avant de clôturer — cette action est définitive.</div>' +
       '<div class="cloture-recap">' + recapLignesHTML(bilan) + '</div>' +
+      '<div class="cloture-note">' +
+        '<button type="button" class="cloture-note-toggle" data-action="cloture-note-basculer" aria-expanded="false">' +
+          '<span class="pc-chevron">▸</span> Souhaitez-vous ajouter une note de fin de tournée ?' +
+        '</button>' +
+        '<textarea id="clotureNote" rows="3" placeholder="Ce qu&rsquo;il faut retenir de cette tournée…" hidden></textarea>' +
+      '</div>' +
       '<button class="cloture-btn" data-action="tournee-terminer-confirmer">Confirmer la clôture</button>' +
       '<button class="sheet-cancel" data-action="sheet-close">Annuler</button>';
     els.sheetOverlay.classList.add("open");
+  }
+
+  // Replier la question vaut renoncement : le champ est vidé, donc rien ne
+  // partira dans le rapport. Une note n'y figure que si elle a été écrite et
+  // laissée visible au moment de confirmer.
+  function clotureNoteBasculer(btn) {
+    var ta = document.getElementById("clotureNote");
+    if (!ta) return;
+    var ouvre = ta.hidden;
+    ta.hidden = !ouvre;
+    if (!ouvre) ta.value = "";
+    btn.setAttribute("aria-expanded", ouvre);
+    btn.querySelector(".pc-chevron").textContent = ouvre ? "▾" : "▸";
+    if (ouvre) ta.focus();
+  }
+
+  function clotureNoteSaisie() {
+    var ta = document.getElementById("clotureNote");
+    return (ta && !ta.hidden && ta.value.trim()) || "";
   }
 
   // Document HTML autonome — style inline, aucune dépendance à styles.css —
@@ -2196,10 +2222,6 @@ window.UI = (function () {
       '</tr>';
     }
 
-    function ligneObservation(o) {
-      return '<li><strong>' + escapeHtml([o.row.numero, o.row.rue].filter(Boolean).join(" ")) + '</strong> — ' + escapeHtml(o.row.notes) + '</li>';
-    }
-
     // Mini-résumé des motifs de non-distribution, en proportion du total : ce
     // que le détail ligne à ligne, plus bas, n'offre pas d'un coup d'œil.
     function motifResumeHTML(nonDistributions) {
@@ -2218,11 +2240,6 @@ window.UI = (function () {
           ' — ' + pct + ' % (' + n + ')</span>';
       }).join("") + '</div>';
     }
-
-    // Le rapport ne cite que les notes nouvelles ou modifiées depuis le
-    // dernier rapport : celles déjà lues à cette occasion n'ont rien à
-    // apprendre à qui relit le suivi d'une tournée récurrente.
-    var notesNouvelles = bilan.notes.filter(function (o) { return o.nouvelle; });
 
     var categoriesLignes = bilan.categories.map(function (c) {
       return '<tr><td>' + c.icon + ' ' + escapeHtml(c.label) + '</td><td>' + c.total + '</td><td>' + c.distribue + '</td><td>' + c.abandonne + '</td><td>' + c.restant + '</td></tr>';
@@ -2250,6 +2267,7 @@ window.UI = (function () {
         '.motif-resume{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0;}' +
         '.motif-resume-item{background:#fff;border:1px solid #eec5c0;border-radius:20px;padding:4px 10px;font-size:12.5px;}' +
         'ul{padding-left:18px;font-size:13px;}' +
+        '.note-fin{background:#fff;border:1px solid #dfe2dc;border-radius:10px;padding:12px 14px;font-size:13.5px;line-height:1.5;white-space:pre-wrap;}' +
         '.muted{color:#6b7268;}' +
       '</style></head><body>' +
       '<h1>Rapport de distribution courrier-colis</h1>' +
@@ -2273,10 +2291,12 @@ window.UI = (function () {
               bilan.nonDistributions.map(ligneNonDistrib).join("") +
             '</tbody></table></div>'
         : '<p class="muted">Toutes les distributions ont abouti.</p>') +
-      '<h2>Observations' + (notesNouvelles.length ? "" : " — aucune") + '</h2>' +
-      (notesNouvelles.length
-        ? '<ul>' + notesNouvelles.map(ligneObservation).join("") + '</ul>'
-        : '<p class="muted">Aucune note nouvelle enregistrée pendant cette tournée.</p>') +
+      // Les notes de terrain des fiches ne remontent plus d'elles-mêmes : la
+      // seule observation du rapport est celle que le livreur a voulu écrire
+      // en clôturant. Elle n'apparaît donc que s'il en a écrit une.
+      (ctx.note
+        ? '<h2>Note de fin de tournée</h2><p class="note-fin">' + escapeHtml(ctx.note) + '</p>'
+        : "") +
       '</body></html>';
   }
 
@@ -2294,7 +2314,8 @@ window.UI = (function () {
     var idT = S.getIdTournee();
     var groups = buildTourneeGroups(idT);
     var bilan = tourneeBilan(idT, groups);
-    var html = genererRapportTourneeHTML({ idTournee: idT, debut: bilan.debut, fin: new Date().toISOString(), bilan: bilan });
+    var note = clotureNoteSaisie();
+    var html = genererRapportTourneeHTML({ idTournee: idT, debut: bilan.debut, fin: new Date().toISOString(), bilan: bilan, note: note });
     // L'archive garde un résumé allégé : les lignes détaillées (destinataires,
     // adresses, notes) restent uniquement dans le HTML déjà généré, pas
     // dupliquées une deuxième fois dans le stockage.
@@ -2304,9 +2325,6 @@ window.UI = (function () {
       notesCount: bilan.notes.length, categories: bilan.categories, debut: bilan.debut
     };
     Prep.cloturer(idT, html, resumeArchive);
-    // Les notes citées dans ce rapport sont désormais connues : le prochain
-    // rapport de cette tournée ne les répétera pas si elles n'ont pas changé.
-    Prep.marquerNotesVues(bilan.notes.map(function (o) { return { addressId: o.row.id, notes: o.row.notes }; }));
     // La tournée est close : sa préparation (quantités, zones, statuts) est
     // vidée pour repartir propre la prochaine fois, sans lever le verrou de
     // clôture qui vient d'être posé.
@@ -2383,7 +2401,6 @@ window.UI = (function () {
           (g.commune ? '<span class="commune-dot" style="background:' + S.getCommuneColor(g.commune) + ';"></span>' : "") +
           '<div class="tournee-card-title">' + escapeHtml(g.rue) + '</div>' +
           '<span class="tournee-casier' + (g.casier ? "" : " hors") + '">' + escapeHtml(g.casierLabel) + '</span>' +
-          '<button class="addr-btn nav zone-nav" data-action="zone-naviguer" data-key="' + escapeHtml(g.key) + '" aria-label="Se rendre dans cette zone">🧭</button>' +
         '</div>' +
         (g.commune ? '<div class="tournee-card-sub">' + escapeHtml(S.communeLabel(g.commune, g.lieuDit)) + '</div>' : "") +
         (g.standard
@@ -2400,6 +2417,7 @@ window.UI = (function () {
 
   function tourneeNav(delta) {
     var groups = buildTourneeGroups(S.getIdTournee());
+    stdItineraireKey = "";
     tourneeIndex += delta;
     clampTourneeIndex(groups);
     renderSuiviTournee(groups);
@@ -2441,7 +2459,7 @@ window.UI = (function () {
     if (!g) return;
     var ids = idsRestants(g);
     if (!ids.length) return;
-    openMotifSheet("Abandonner la zone", ids.length + " adresse(s) restante(s) — " + g.libelle, { scope: "zone", ids: ids });
+    openMotifSheet("Abandonner la distribution", ids.length + " adresse(s) restante(s) — " + g.libelle, { scope: "zone", ids: ids });
   }
 
   // Mêmes gestes que pour les objets suivis, sur l'autre registre : valider,
@@ -2465,6 +2483,13 @@ window.UI = (function () {
   // Comme pour les objets suivis : un clic vaut validation immédiate, sans
   // confirmation. La réouverture (zoneStdRouvrir, plus bas) en garde une —
   // c'est elle qui protège d'une validation inversée par erreur.
+  // Armer / désarmer la désignation du point d'arrivée. Un second appui
+  // annule : on ne reste jamais coincé dans un mode dont on ne veut plus.
+  function zoneStdItineraire(key) {
+    stdItineraireKey = stdItineraireKey === key ? "" : key;
+    renderSuiviTournee();
+  }
+
   function zoneStdValider(key) {
     if (tourneeVerrouillee()) return;
     var g = findGroup(key);
@@ -2499,7 +2524,7 @@ window.UI = (function () {
     if (!g) return;
     var ids = g.items.map(function (it) { return it.row.id; });
     if (!confirmAction("Remettre les " + ids.length + " adresses de " + g.libelle + " à faire ?")) return;
-    applyStatut(ids, Prep.STATUTS.A_FAIRE, "", "Zone rouverte.");
+    applyStatut(ids, Prep.STATUTS.A_FAIRE, "", "Distribution rouverte.");
   }
 
   // Un relevé n'entraîne un nouveau rendu que s'il apprend quelque chose : le
@@ -3574,8 +3599,8 @@ window.UI = (function () {
       case "zone-rouvrir":
         zoneRouvrir(actionEl.getAttribute("data-key"));
         break;
-      case "zone-naviguer":
-        naviguerVersZone(actionEl.getAttribute("data-key"));
+      case "zone-std-itineraire":
+        zoneStdItineraire(actionEl.getAttribute("data-key"));
         break;
       case "zone-std-valider":
         zoneStdValider(actionEl.getAttribute("data-key"));
@@ -3591,6 +3616,9 @@ window.UI = (function () {
         break;
       case "tournee-terminer-ouvrir":
         ouvrirClotureSheet();
+        break;
+      case "cloture-note-basculer":
+        clotureNoteBasculer(actionEl);
         break;
       case "tournee-terminer-confirmer":
         tourneeTerminerConfirmer();

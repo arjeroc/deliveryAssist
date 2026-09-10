@@ -12,7 +12,6 @@ window.Prep = (function () {
   var STD_KEY = "atournee_prep_std_v1";
   var RAPPORTS_KEY = "atournee_rapports_v1";
   var CLOTURES_KEY = "atournee_clotures_v1";
-  var NOTES_VUES_KEY = "atournee_notes_vues_v1";
   // { [id_tournee]: { [addressId]: { lettres:n, colis:n, presse:n, statut:s, motif:'', horodatage:iso } } }
   var state = {};
   // Zones de courrier standard retenues pour la tournée, désignées par leur
@@ -44,7 +43,6 @@ window.Prep = (function () {
   // déjà signalée : { [addressId]: texte }. Sert à ne montrer, dans le
   // rapport suivant, que les notes nouvelles ou modifiées depuis la dernière
   // clôture — pas celles déjà lues dans un rapport précédent.
-  var notesVues = {};
 
   // Catégories d'items à distribuer, source unique pour toute l'application :
   // ajouter une catégorie ici suffit à la faire apparaître partout.
@@ -240,31 +238,6 @@ window.Prep = (function () {
     try { localStorage.setItem(CLOTURES_KEY, JSON.stringify(clotures)); } catch (e) { /* ignore */ }
   }
 
-  function loadNotesVues() {
-    try {
-      var raw = localStorage.getItem(NOTES_VUES_KEY);
-      notesVues = raw ? JSON.parse(raw) : {};
-    } catch (e) { notesVues = {}; }
-  }
-
-  function persistNotesVues() {
-    try { localStorage.setItem(NOTES_VUES_KEY, JSON.stringify(notesVues)); } catch (e) { /* ignore */ }
-  }
-
-  // Une note compte comme nouvelle si elle n'a jamais figuré dans un rapport
-  // précédent, ou si son texte a changé depuis — une note reformulée mérite
-  // d'être relue, pas noyée parmi les anciennes.
-  function estNoteNouvelle(addressId, texte) {
-    return !!texte && notesVues[addressId] !== texte;
-  }
-
-  // Marque des notes comme désormais connues, à l'appel une fois le rapport
-  // qui les cite généré : elles ne réapparaîtront plus tant qu'inchangées.
-  function marquerNotesVues(entries) {
-    entries.forEach(function (e) { notesVues[e.addressId] = e.notes; });
-    persistNotesVues();
-  }
-
   function uidRapport() {
     return "rap-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8);
   }
@@ -312,7 +285,6 @@ window.Prep = (function () {
     loadStandard();
     loadRapports();
     loadClotures();
-    loadNotesVues();
     try {
       var raw = localStorage.getItem(KEY);
       state = raw ? JSON.parse(raw) : {};
@@ -538,8 +510,6 @@ window.Prep = (function () {
     listRapports: listRapports,
     getRapport: getRapport,
     getRapportActif: getRapportActif,
-    supprimerRapport: supprimerRapport,
-    estNoteNouvelle: estNoteNouvelle,
-    marquerNotesVues: marquerNotesVues
+    supprimerRapport: supprimerRapport
   };
 })();
