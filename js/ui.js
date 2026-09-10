@@ -1715,17 +1715,21 @@ window.UI = (function () {
 
   function pickMotif(motifKey) {
     if (!sheetTarget) return;
-    var ids = sheetTarget.ids;
-    var scope = sheetTarget.scope;
+    var cible = sheetTarget;
+    var ids = cible.ids;
     closeSheet();
-    if (scope === "standard") {
+    if (cible.scope === "etape") {
+      appliquerEtape(ids, cible.idsStd, Prep.STATUTS.ABANDONNE, motifKey,
+        (ids.length + cible.idsStd.length) + " non distribué(s) — " + Prep.motifLabel(motifKey));
+      return;
+    }
+    if (cible.scope === "standard") {
       applyStatutStandard(ids, Prep.STATUTS.ABANDONNE, motifKey,
         ids.length + " numéro(s) non distribué(s) — " + Prep.motifLabel(motifKey));
       return;
     }
     applyStatut(ids, Prep.STATUTS.ABANDONNE, motifKey,
-      scope === "zone" ? ids.length + " adresse(s) abandonnée(s) — " + Prep.motifLabel(motifKey)
-                       : "Non distribuée — " + Prep.motifLabel(motifKey));
+      "Non distribuée — " + Prep.motifLabel(motifKey));
   }
 
   // --- onglet Tournée : cards par rue, parcourues dans l'ordre de la tournée ---
@@ -2013,45 +2017,48 @@ window.UI = (function () {
     var key = escapeHtml(g.key);
     var etat = stdEtatHTML(g);
     var arme = stdItineraireKey === g.key;
-    var itinBtn = '<button class="std-btn itin' + (arme ? " active" : "") + '" ' +
-      'data-action="zone-std-itineraire" data-key="' + key + '">🧭 Itinéraire</button>';
     return '<div class="std-bloc' + (g.stdTerminee ? " est-fait" : "") + '">' +
       '<div class="std-entete">' +
         '<span class="std-pastille">📮</span>' +
         '<div class="std-titre">Distribution standard' +
           '<div class="std-sous ' + etat.classe + '">' + escapeHtml(etat.texte) + '</div>' +
         '</div>' +
-        '<span class="std-compte">' + g.standards.length + '</span>' +
+        // Mêmes trois gestes que sur une adresse d'objet suivi — même
+        // gabarit, même ordre, même bascule — à la place du compteur, que la
+        // ligne d'état sous le titre redit déjà.
+        '<div class="addr-actions">' +
+          '<button class="addr-btn nav' + (arme ? " active" : "") + '" data-action="zone-std-itineraire" data-key="' + key + '" aria-label="Itinéraire vers un numéro">🧭</button>' +
+          '<button class="addr-btn stop' + (g.stdAbandonnees === g.standards.length ? " active" : "") + '" data-action="zone-std-abandonner" data-key="' + key + '" aria-label="Ne pas distribuer">⊘</button>' +
+          '<button class="addr-btn ok' + (g.stdDistribuees === g.standards.length ? " active" : "") + '" data-action="zone-std-valider" data-key="' + key + '" aria-label="Valider la distribution">✓</button>' +
+        '</div>' +
       '</div>' +
       (arme ? '<div class="std-itin-hint">🧭 Sélectionnez un numéro pour lancer l&rsquo;itinéraire.</div>' : "") +
       '<div class="std-numeros' + (arme ? " en-itineraire" : "") + '">' +
         g.standards.map(function (it) { return stdNumeroHTML(it, arme); }).join("") +
       '</div>' +
-      (g.stdTerminee
-        ? '<div class="std-actions">' +
-            itinBtn +
-            '<button class="std-btn reopen" data-action="zone-std-rouvrir" data-key="' + key + '">↺ Rouvrir la distribution</button>' +
-          '</div>'
-        : '<div class="std-actions">' +
-            itinBtn +
-            '<button class="std-btn stop" data-action="zone-std-abandonner" data-key="' + key + '">⊘ Abandonner</button>' +
-            '<button class="std-btn ok" data-action="zone-std-valider" data-key="' + key + '">✓ Valider la distribution</button>' +
-          '</div>') +
     '</div>';
   }
 
-  function zoneActionsHTML(g) {
+  // Ce qui reste à faire dans l'étape, les deux registres confondus : c'est
+  // une rue qu'on quitte, pas deux comptabilités qu'on solde l'une après
+  // l'autre.
+  function etapeRestantes(g) {
+    return g.restantes + g.stdRestantes;
+  }
+
+  // Les deux seules actions d'ensemble de la card, tout en bas : elles
+  // couvrent d'un geste les objets suivis et les numéros standard. Le détail
+  // — telle adresse, tel bloc — se joue plus haut, sur les icônes.
+  function etapeActionsHTML(g) {
     var key = escapeHtml(g.key);
-    // Zone entièrement standard : ses actions sont portées par son propre bloc.
-    if (g.standard) return "";
-    if (g.terminee) {
+    if (!etapeRestantes(g)) {
       return '<div class="zone-actions">' +
-        '<button class="zone-btn reopen" data-action="zone-rouvrir" data-key="' + key + '">↺ Rouvrir la distribution</button>' +
+        '<button class="zone-btn reopen" data-action="etape-rouvrir" data-key="' + key + '">↺ Rouvrir la distribution</button>' +
       '</div>';
     }
     return '<div class="zone-actions">' +
-      '<button class="zone-btn stop" data-action="zone-abandonner" data-key="' + key + '">⊘ Abandonner</button>' +
-      '<button class="zone-btn ok" data-action="zone-valider" data-key="' + key + '">✓ Valider la distribution</button>' +
+      '<button class="zone-btn stop" data-action="etape-abandonner" data-key="' + key + '">⊘ Abandonner</button>' +
+      '<button class="zone-btn ok" data-action="etape-valider" data-key="' + key + '">✓ Valider la distribution</button>' +
     '</div>';
   }
 
@@ -2408,8 +2415,8 @@ window.UI = (function () {
           : '<div class="tournee-card-figures">' + zoneTotauxHTML(g) + '</div>' +
             zoneProgressHTML(g) +
             '<div class="tournee-addr-list">' + g.items.map(tourneeAddrRowHTML).join("") + '</div>') +
-        zoneActionsHTML(g) +
         zoneStandardHTML(g) +
+        etapeActionsHTML(g) +
       '</div>';
 
     bindTourneeSwipe();
@@ -2441,25 +2448,51 @@ window.UI = (function () {
                   .map(function (it) { return it.row.id; });
   }
 
-  // Une action de masse ne demande confirmation qu'à partir de deux adresses :
-  // en dessous, l'annulation proposée dans le toast suffit largement.
-  function zoneValider(key) {
-    if (tourneeVerrouillee()) return;
-    var g = findGroup(key);
-    if (!g) return;
-    var ids = idsRestants(g);
-    if (!ids.length) return;
-    if (ids.length > 1 && !confirmAction("Marquer les " + ids.length + " adresses restantes de " + g.libelle + " comme distribuées ?")) return;
-    applyStatut(ids, Prep.STATUTS.DISTRIBUE, "", ids.length + " adresse(s) distribuée(s).");
+  // Un seul instantané pour les deux registres : l'annulation offerte par le
+  // toast doit défaire l'étape entière, pas la moitié qu'elle connaîtrait.
+  function appliquerEtape(ids, idsStd, statut, motif, message) {
+    var idT = S.getIdTournee();
+    var snap = Prep.setStatutMany(idT, ids, statut, motif);
+    var snapStd = Prep.setStandardStatutMany(idT, idsStd, statut, motif);
+    refreshSuiviAfterChange();
+    toast(message, "ok", function () {
+      Prep.restore(idT, snap);
+      Prep.restoreStandard(idT, snapStd);
+      refreshSuiviAfterChange();
+    });
   }
 
-  function zoneAbandonner(key) {
+  // Pas de confirmation : le toast porte son « Annuler », et c'est déjà ainsi
+  // que se validait le courrier standard. Rouvrir, en revanche, en garde une —
+  // c'est le geste qui défait du travail déjà fait.
+  function etapeValider(key) {
     if (tourneeVerrouillee()) return;
     var g = findGroup(key);
     if (!g) return;
-    var ids = idsRestants(g);
-    if (!ids.length) return;
-    openMotifSheet("Abandonner la distribution", ids.length + " adresse(s) restante(s) — " + g.libelle, { scope: "zone", ids: ids });
+    var ids = idsRestants(g), idsStd = idsStdRestants(g);
+    var n = ids.length + idsStd.length;
+    if (!n) return;
+    appliquerEtape(ids, idsStd, Prep.STATUTS.DISTRIBUE, "", n + " distribution(s) validée(s).");
+  }
+
+  function etapeAbandonner(key) {
+    if (tourneeVerrouillee()) return;
+    var g = findGroup(key);
+    if (!g) return;
+    var ids = idsRestants(g), idsStd = idsStdRestants(g);
+    var n = ids.length + idsStd.length;
+    if (!n) return;
+    openMotifSheet("Abandonner la distribution", n + " restante(s) — " + g.libelle,
+      { scope: "etape", ids: ids, idsStd: idsStd });
+  }
+
+  function etapeRouvrir(key) {
+    if (tourneeVerrouillee()) return;
+    var g = findGroup(key);
+    if (!g) return;
+    if (!confirmAction("Remettre toute la distribution de " + g.libelle + " à faire ?")) return;
+    appliquerEtape(g.items.map(function (it) { return it.row.id; }), idsStdTous(g),
+      Prep.STATUTS.A_FAIRE, "", "Distribution rouverte.");
   }
 
   // Mêmes gestes que pour les objets suivis, sur l'autre registre : valider,
@@ -2480,9 +2513,6 @@ window.UI = (function () {
     });
   }
 
-  // Comme pour les objets suivis : un clic vaut validation immédiate, sans
-  // confirmation. La réouverture (zoneStdRouvrir, plus bas) en garde une —
-  // c'est elle qui protège d'une validation inversée par erreur.
   // Armer / désarmer la désignation du point d'arrivée. Un second appui
   // annule : on ne reste jamais coincé dans un mode dont on ne veut plus.
   function zoneStdItineraire(key) {
@@ -2490,12 +2520,27 @@ window.UI = (function () {
     renderSuiviTournee();
   }
 
+  function idsStdTous(g) {
+    return g.standards.map(function (it) { return it.row.id; });
+  }
+
+  function idsStdSauf(g, statut) {
+    return g.standards.filter(function (it) { return it.entry.statut !== statut; })
+                      .map(function (it) { return it.row.id; });
+  }
+
+  // Exactement la bascule du ✓ d'une adresse, appliquée au bloc entier :
+  // ré-appuyer quand tout est distribué remet à faire, et un premier appui
+  // rattrape aussi les numéros qui avaient été abandonnés.
   function zoneStdValider(key) {
     if (tourneeVerrouillee()) return;
     var g = findGroup(key);
     if (!g) return;
-    var ids = idsStdRestants(g);
-    if (!ids.length) return;
+    if (g.stdDistribuees === g.standards.length) {
+      applyStatutStandard(idsStdTous(g), Prep.STATUTS.A_FAIRE, "", "Numéros remis à faire.");
+      return;
+    }
+    var ids = idsStdSauf(g, Prep.STATUTS.DISTRIBUE);
     applyStatutStandard(ids, Prep.STATUTS.DISTRIBUE, "", ids.length + " numéro(s) distribué(s).");
   }
 
@@ -2503,28 +2548,13 @@ window.UI = (function () {
     if (tourneeVerrouillee()) return;
     var g = findGroup(key);
     if (!g) return;
-    var ids = idsStdRestants(g);
-    if (!ids.length) return;
-    openMotifSheet("Abandonner la distribution standard", ids.length + " numéro(s) — " + g.libelle,
+    if (g.stdAbandonnees === g.standards.length) {
+      applyStatutStandard(idsStdTous(g), Prep.STATUTS.A_FAIRE, "", "Numéros remis à faire.");
+      return;
+    }
+    var ids = idsStdSauf(g, Prep.STATUTS.ABANDONNE);
+    openMotifSheet("Ne pas distribuer", ids.length + " numéro(s) — " + g.libelle,
       { scope: "standard", ids: ids });
-  }
-
-  function zoneStdRouvrir(key) {
-    if (tourneeVerrouillee()) return;
-    var g = findGroup(key);
-    if (!g) return;
-    var ids = g.standards.map(function (it) { return it.row.id; });
-    if (!confirmAction("Remettre la distribution standard de " + g.libelle + " à faire ?")) return;
-    applyStatutStandard(ids, Prep.STATUTS.A_FAIRE, "", "Distribution standard rouverte.");
-  }
-
-  function zoneRouvrir(key) {
-    if (tourneeVerrouillee()) return;
-    var g = findGroup(key);
-    if (!g) return;
-    var ids = g.items.map(function (it) { return it.row.id; });
-    if (!confirmAction("Remettre les " + ids.length + " adresses de " + g.libelle + " à faire ?")) return;
-    applyStatut(ids, Prep.STATUTS.A_FAIRE, "", "Distribution rouverte.");
   }
 
   // Un relevé n'entraîne un nouveau rendu que s'il apprend quelque chose : le
@@ -3590,14 +3620,14 @@ window.UI = (function () {
       case "addr-detail-basculer":
         addrDetailBasculer(actionEl.getAttribute("data-id"));
         break;
-      case "zone-valider":
-        zoneValider(actionEl.getAttribute("data-key"));
+      case "etape-valider":
+        etapeValider(actionEl.getAttribute("data-key"));
         break;
-      case "zone-abandonner":
-        zoneAbandonner(actionEl.getAttribute("data-key"));
+      case "etape-abandonner":
+        etapeAbandonner(actionEl.getAttribute("data-key"));
         break;
-      case "zone-rouvrir":
-        zoneRouvrir(actionEl.getAttribute("data-key"));
+      case "etape-rouvrir":
+        etapeRouvrir(actionEl.getAttribute("data-key"));
         break;
       case "zone-std-itineraire":
         zoneStdItineraire(actionEl.getAttribute("data-key"));
@@ -3607,9 +3637,6 @@ window.UI = (function () {
         break;
       case "zone-std-abandonner":
         zoneStdAbandonner(actionEl.getAttribute("data-key"));
-        break;
-      case "zone-std-rouvrir":
-        zoneStdRouvrir(actionEl.getAttribute("data-key"));
         break;
       case "std-num-valider":
         stdNumValider(actionEl.getAttribute("data-id"));

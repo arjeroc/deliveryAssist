@@ -280,17 +280,15 @@ mark{background:#fff2a8;color:inherit;border-radius:3px;padding:0 1px;}
   border:1px dashed #d8ccae;border-left:4px solid #c2a367;border-radius:12px;padding:12px;
 }
 .std-bloc.est-fait{background:#f4f6f2;border-color:#d5dbd2;border-left-color:var(--accent);}
-.std-entete{display:flex;align-items:center;gap:10px;}
+/* Trois boutons de 40 px prennent la place d'un compteur : le titre passe sur
+   deux lignes plutot que de rogner des cibles tactiles calquees sur celles
+   d'une adresse. */
+.std-entete{display:flex;align-items:center;gap:8px;}
 .std-pastille{font-size:20px;line-height:1;flex:0 0 auto;}
-.std-titre{flex:1;min-width:0;font-size:14px;font-weight:800;}
+.std-titre{flex:1;min-width:0;font-size:14px;font-weight:800;line-height:1.2;}
 .std-sous{font-size:11.5px;font-weight:600;color:var(--muted);margin-top:2px;}
 .std-sous.est-ok{color:var(--accent);}
 .std-sous.est-ko{color:var(--err);}
-.std-compte{
-  flex:0 0 auto;font-size:15px;font-weight:800;color:#7a5c2e;
-  background:#f1e6cd;border-radius:999px;padding:3px 11px;font-variant-numeric:tabular-nums;
-}
-.std-bloc.est-fait .std-compte{color:var(--accent);background:#e6f2ea;}
 
 /* les numéros à desservir : ce que l'œil cherche en arrivant devant la rue */
 .std-numeros{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0 2px;max-height:132px;overflow-y:auto;}
@@ -314,17 +312,6 @@ mark{background:#fff2a8;color:inherit;border-radius:3px;padding:0 1px;}
 .std-num.is-distribue{background:#e9f4ee;border-color:#bcdcc9;color:var(--accent);text-decoration:line-through;}
 .std-num.is-abandonne{background:var(--err-bg);border-color:#eec5c0;color:var(--err);}
 
-.std-actions{display:flex;gap:8px;margin-top:12px;}
-.std-btn{
-  flex:1;padding:12px 8px;border-radius:10px;border:1px dashed #c2a367;background:#fff;
-  font-weight:700;font-size:14px;color:var(--ink);cursor:pointer;
-}
-.std-btn.ok{flex:2;background:#7a5c2e;border:1px solid #7a5c2e;color:#fff;}
-.std-btn.stop{color:var(--warn);}
-.std-btn.reopen{color:var(--muted);border-style:solid;border-color:var(--line);}
-.std-btn.itin{flex:0 0 auto;padding:12px 12px;border-style:solid;border-color:var(--line);}
-.std-btn.itin.active{background:var(--info-bg);border-color:var(--info);color:var(--info);}
-.std-btn:active{opacity:.85;}
 
 /* --- doublon d'adresse détecté à la saisie --- */
 .dup-notice{background:var(--info-bg);border:1px solid #c8ddef;border-radius:10px;padding:10px 12px;margin:4px 0 10px;}
@@ -371,8 +358,9 @@ mark{background:#fff2a8;color:inherit;border-radius:3px;padding:0 1px;}
 .addr-btn:active{background:#eef1ec;}
 .addr-btn.ok.active{background:var(--accent);border-color:var(--accent);color:#fff;}
 .addr-btn.stop.active{background:var(--warn);border-color:var(--warn);color:#fff;}
+.addr-btn.nav.active{background:var(--info);border-color:var(--info);color:#fff;}
 
-.zone-actions{display:flex;gap:8px;margin-top:12px;}
+.zone-actions{display:flex;gap:8px;margin-top:14px;}
 .zone-btn{flex:1;padding:12px 8px;border-radius:10px;border:1px solid var(--line);background:#fff;font-weight:700;font-size:14px;cursor:pointer;}
 .zone-btn.ok{background:var(--accent);border-color:var(--accent);color:#fff;flex:2;}
 .zone-btn.stop{color:var(--warn);}
