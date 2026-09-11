@@ -288,8 +288,9 @@ window.Store = (function () {
   // Une tournée peut se composer de plusieurs fichiers — tm0, tm1… — apportant
   // chacun sa propre grille de casier. Deux fichiers posant chacun une C1L1
   // décrivent deux cases réelles distinctes : elles ne se fondent jamais l'une
-  // dans l'autre, même adresse pour adresse. Ce qui les départage est l'ordre
-  // d'empilement choisi par l'utilisateur, et lui seul.
+  // dans l'autre, même adresse pour adresse. L'ordre d'empilement choisi par
+  // l'utilisateur prime sur cette grille : file 1 se lit en entier avant
+  // file 2, même quand les deux posent les mêmes cases ou les mêmes rues.
   //
   // Tant qu'un seul fichier est chargé — le cas courant — tout ce mécanisme
   // reste transparent : le rang de fichier est constant, le discriminant vide,
@@ -536,8 +537,13 @@ window.Store = (function () {
     return (v === "" || v === undefined || v === null || isNaN(Number(v))) ? Infinity : Number(v);
   }
 
+  // L'empilement prime sur tout : file 1 se lit en entier avant file 2, quel
+  // que soit le casier ou la rue. Le rang de fichier passe donc en tête de clé
+  // — sans quoi deux fichiers posant les mêmes cases s'entrelacent case par
+  // case, et une rue de file 1 aux noms proches de ceux de file 2 ressort
+  // coupée par des étapes intercalées de file 2 dans le volet course.
   function rangTournee(row) {
-    return [ordreNum(row.casier_c), ordreNum(row.casier_l), rangFichier(row),
+    return [rangFichier(row), ordreNum(row.casier_c), ordreNum(row.casier_l),
             ordreNum(row.ordre_zone), ordreNum(row.ordre_rue)];
   }
 
