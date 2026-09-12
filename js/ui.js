@@ -2336,9 +2336,12 @@ window.UI = (function () {
     // vidée pour repartir propre la prochaine fois, sans lever le verrou de
     // clôture qui vient d'être posé.
     Prep.viderPreparation(idT);
+    prepZoneIndex = 0;
+    tourneeIndex = 0;
     closeSheet();
     ouvrirRapportDansOnglet(html);
     toast("Tournée clôturée. Rapport généré.", "ok");
+    renderPrep();
     renderSuivi();
   }
 
