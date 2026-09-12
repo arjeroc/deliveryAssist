@@ -115,8 +115,11 @@ window.UI = (function () {
   // et à l'intérieur des Données : Recherche / Carte / Fiche.
   // ---------------------------------------------------------------------
   var currentMainPage = "db";
+  // La Course recouvre tout l'écran : « Quitter » ramène là où on était.
+  var pageAvantCourse = "db";
 
   function showMainPage(name) {
+    if (name === "suivi" && currentMainPage !== "suivi") pageAvantCourse = currentMainPage;
     currentMainPage = name;
     ["db", "prep", "suivi"].forEach(function (p) {
       document.getElementById("page-" + p).classList.toggle("active", p === name);
@@ -126,12 +129,11 @@ window.UI = (function () {
     });
     if (name === "prep") renderPrep();
     if (name === "suivi") {
-      suiviMap.ensureMap("suiviMapContainer");
-      if (suiviTab === "carte") {
-        suiviMap.invalidateSize();
-        dessinerTraceSuivi();
-      }
-      renderSuivi();
+      // On entre toujours par la Tournée actuelle, sur la première card qui
+      // a encore quelque chose à distribuer.
+      var groups = buildTourneeGroups(S.getIdTournee());
+      tourneeIndex = premiereEtapeAFaire(groups);
+      setSuiviTab("tournee");
     }
     majSuiviWatch();
     window.scrollTo(0, 0);
@@ -1483,21 +1485,21 @@ window.UI = (function () {
   }
 
   // ---------------------------------------------------------------------
-  // Page 3 — Course (position actuelle, proximité, avancement)
+  // Page 3 — Course, en plein écran : Vue générale / Tournée actuelle
   // ---------------------------------------------------------------------
   var suiviWatchId = null;
-  var suiviUserPos = null;    // { lat, lon, accuracy }
-  var suiviCentered = false;  // ne recentrer la carte qu'une seule fois sur le 1er relevé
-  var suiviCarteCadree = false; // cadrage initial sur l'ensemble des points, une seule fois
-  var suiviTab = "tournee";   // 'tournee' | 'carte'
-  var suiviDernierRelevé = 0; // horodatage du dernier rendu déclenché par le GPS
+  var suiviUserPos = null;    // { lat, lon, accuracy, horodatage }
+  var suiviCentered = false;  // Vue générale : recentrer une seule fois sur le 1er relevé
+  var suiviTab = "tournee";   // 'generale' | 'tournee'
+  var suiviPoints = [];       // marqueurs posés au dernier rendu, pour le cadrage
+  var suiviCarteFocalisee = false; // le premier cadrage choisit le zoom, les suivants le respectent
 
   // Le GPS est le poste de consommation le plus lourd d'un téléphone en
-  // tournée. Il ne tourne donc que pendant que la carte est réellement
-  // regardée : changer d'onglet, quitter la Course ou passer l'application en
-  // arrière-plan l'arrête. Voir startSuiviWatch/stopSuiviWatch.
+  // tournée. Il ne tourne donc que pendant qu'une carte est à l'écran : carte
+  // repliée, Course quittée ou application en arrière-plan l'arrêtent.
   function carteOuverte() {
-    return currentMainPage === "suivi" && suiviTab === "carte" && !document.hidden;
+    return currentMainPage === "suivi" && !document.hidden &&
+      (suiviTab === "generale" || !S.getSettings().courseCarteRepliee);
   }
 
   function majSuiviWatch() {
@@ -1505,33 +1507,64 @@ window.UI = (function () {
     else stopSuiviWatch();
   }
 
-  function suiviGeoStatusHTML(text, kind) {
-    return '<span class="' + (kind || "") + '">' + escapeHtml(text) + '</span>';
-  }
-
   function setSuiviTab(tab) {
     suiviTab = tab;
-    ["tournee", "carte"].forEach(function (t) {
-      document.getElementById("suivi-view-" + t).classList.toggle("active", t === tab);
-    });
+    els.pageSuivi.classList.toggle("vue-generale", tab === "generale");
+    els.pageSuivi.classList.toggle("vue-tournee", tab === "tournee");
     els.suiviSubNav.querySelectorAll("[data-suivitab]").forEach(function (btn) {
       btn.classList.toggle("active", btn.getAttribute("data-suivitab") === tab);
     });
-    if (tab === "carte") {
-      dessinerTraceSuivi();
-      // Le conteneur vient seulement d'être démasqué : on attend qu'il ait
-      // repris ses dimensions avant de cadrer, sinon Leaflet cadre dans le vide.
-      suiviMap.invalidateSize(renderSuiviCarte);
-    }
+    renderSuivi();
+    dessinerTraceSuivi();
+    // La grille vient de changer de forme : on attend que le conteneur ait
+    // repris ses dimensions avant de cadrer, sinon Leaflet cadre dans le vide.
+    suiviMap.invalidateSize(cadrerCarte);
     majSuiviWatch();
   }
 
   // La même trace que la carte de synthèse, en fond discret : elle situe la
-  // position du livreur dans l'ensemble de la tournée sans concurrencer les
-  // marqueurs de distribution. Dessinée à la navigation seulement — la
-  // redessiner à chaque relevé GPS serait du gaspillage.
+  // card dans l'ensemble de la tournée sans concurrencer les marqueurs. Un
+  // réglage avancé la retire des cartes de la Course.
   function dessinerTraceSuivi() {
+    if (S.getSettings().traceCourse === false) { Parcours.effacer(suiviMap); return; }
     Parcours.afficher(suiviMap, { leger: true, recentrer: false });
+  }
+
+  // Carte repliée ou rouverte à la demande. Le choix est gardé tel quel d'une
+  // card à l'autre et d'une session à l'autre : seul l'utilisateur le change.
+  function courseCarteBasculer() {
+    S.setSetting("courseCarteRepliee", !S.getSettings().courseCarteRepliee);
+    renderSuiviCarte();
+    suiviMap.invalidateSize(cadrerCarte);
+    majSuiviWatch();
+  }
+
+  function courseQuitter() {
+    showMainPage(pageAvantCourse);
+  }
+
+  // Cadrage de la carte.
+  //
+  // Vue générale : toute la tournée. Tournée actuelle : les points de la card
+  // active, et le zoom reste celui de l'utilisateur tant qu'ils y tiennent —
+  // la carte se recentre, et ne recule d'un cran que s'ils débordent. Seul le
+  // tout premier cadrage choisit lui-même le zoom standard des cartes.
+  var ZOOM_STANDARD = 16;
+
+  function cadrerCarte() {
+    var map = suiviMap.getMap();
+    if (!map || currentMainPage !== "suivi" || !els.suiviMapContainer.offsetHeight) return;
+    if (suiviTab === "generale") {
+      if (suiviPoints.length) suiviMap.fitPoints(suiviPoints);
+      else Parcours.recentrer(suiviMap);
+      return;
+    }
+    if (!suiviPoints.length) return;
+    var zone = L.latLngBounds(suiviPoints.map(function (p) { return [p.lat, p.lon]; }));
+    var zoomQuiTient = map.getBoundsZoom(zone, false, L.point(60, 60));
+    var zoom = Math.min(suiviCarteFocalisee ? map.getZoom() : ZOOM_STANDARD, zoomQuiTient);
+    suiviCarteFocalisee = true;
+    map.setView(zone.getCenter(), zoom);
   }
 
   // ---------------------------------------------------------------------
@@ -1635,28 +1668,15 @@ window.UI = (function () {
 
     if (suiviUserPos && suiviUserPos.horodatage &&
         Date.now() - suiviUserPos.horodatage < RELEVE_FRAICHEUR_MS) {
-      appliquerReleve(addrId, suiviUserPos.lat, suiviUserPos.lon, suiviUserPos.accuracy);
+      S.enregistrerReleveAuto(addrId, suiviUserPos.lat, suiviUserPos.lon, suiviUserPos.accuracy);
       return;
     }
     if (!navigator.geolocation) return;
     navigator.geolocation.getCurrentPosition(function (pos) {
-      appliquerReleve(addrId, pos.coords.latitude, pos.coords.longitude, pos.coords.accuracy);
+      S.enregistrerReleveAuto(addrId, pos.coords.latitude, pos.coords.longitude, pos.coords.accuracy);
     }, function () {
       // Position indisponible : la livraison reste validée, sans un mot.
     }, { enableHighAccuracy: true, timeout: 8000, maximumAge: 0 });
-  }
-
-  function appliquerReleve(addrId, lat, lon, precision) {
-    var res = S.enregistrerReleveAuto(addrId, lat, lon, precision);
-    if (!res.ok) return;
-    // Le seul retour visible tient dans la ligne d'état de la Course, qui sera
-    // de toute façon réécrite au relevé suivant.
-    if (els.suiviGeoStatus) {
-      els.suiviGeoStatus.innerHTML = suiviGeoStatusHTML(
-        (res.promu ? "📍 Position vérifiée" : "📍 Point relevé") +
-        " (± " + Math.round(precision) + " m · score " + res.score.toFixed(2) + ")",
-        res.promu ? "" : "tag-info");
-    }
   }
 
   // ✓ et ⊘ font aussi office de retour arrière : ré-appuyer sur le bouton
@@ -2156,7 +2176,7 @@ window.UI = (function () {
   function tourneeNavHTML(idx, total) {
     return '<div class="tournee-nav">' +
       '<button class="tournee-nav-btn" data-action="tournee-prev" ' + (idx === 0 ? "disabled" : "") + ' aria-label="Étape précédente">‹</button>' +
-      '<div class="tournee-index">Étape ' + (idx + 1) + ' / ' + total + '</div>' +
+      '<div class="tournee-index">' + (idx + 1) + ' / ' + total + '</div>' +
       '<button class="tournee-nav-btn" data-action="tournee-next" ' + (idx === total - 1 ? "disabled" : "") + ' aria-label="Étape suivante">›</button>' +
     '</div>';
   }
@@ -2378,6 +2398,10 @@ window.UI = (function () {
     var idT = S.getIdTournee();
     groups = groups || buildTourneeGroups(idT);
 
+    // Le carrousel se pilote depuis la barre de la Course : il n'y a de flèches
+    // que s'il y a des étapes à parcourir.
+    els.courseEtape.innerHTML = "";
+
     // Une tournée clôturée n'a plus de carrousel à parcourir : la vue
     // verrouillée remplace tout, quel que soit l'index où on l'a laissée.
     if (Prep.estCloturee(idT)) { renderSuiviCloturee(idT, groups); return; }
@@ -2392,20 +2416,17 @@ window.UI = (function () {
       return;
     }
 
-    var totalEtapes = groups.length + 1;
+    els.courseEtape.innerHTML = tourneeNavHTML(tourneeIndex, groups.length + 1);
 
     // Dernière étape du carrousel, systématiquement après la dernière rue :
     // la card de clôture, pas une card de rue.
     if (tourneeIndex === groups.length) {
-      els.suiviTourneeWrap.innerHTML =
-        tourneeNavHTML(tourneeIndex, totalEtapes) +
-        tourneeFinaleCardHTML(tourneeBilan(idT, groups));
+      els.suiviTourneeWrap.innerHTML = tourneeFinaleCardHTML(tourneeBilan(idT, groups));
       return;
     }
 
     var g = groups[tourneeIndex];
     els.suiviTourneeWrap.innerHTML =
-      tourneeNavHTML(tourneeIndex, totalEtapes) +
       '<div class="tournee-card' + (g.standard ? " zone-standard" : "") + '" id="tourneeCardSwipe">' +
         '<div class="tournee-card-head">' +
           (g.commune ? '<span class="commune-dot" style="background:' + S.getCommuneColor(g.commune) + ';"></span>' : "") +
@@ -2430,7 +2451,23 @@ window.UI = (function () {
     stdItineraireKey = "";
     tourneeIndex += delta;
     clampTourneeIndex(groups);
+    allerALaCard(groups);
+  }
+
+  // Changement de card : la card, puis la carte qui la suit — le cadrage ne
+  // s'applique que si la carte est à l'écran ; repliée, elle le reste.
+  function allerALaCard(groups) {
     renderSuiviTournee(groups);
+    renderSuiviCarte(groups);
+    els.coursePanneau.scrollTop = 0;
+    suiviMap.invalidateSize(cadrerCarte);
+  }
+
+  function premiereEtapeAFaire(groups) {
+    for (var i = 0; i < groups.length; i++) {
+      if (etapeRestantes(groups[i])) return i;
+    }
+    return 0;
   }
 
   function findGroup(key) {
@@ -2560,44 +2597,24 @@ window.UI = (function () {
       { scope: "standard", ids: ids });
   }
 
-  // Un relevé n'entraîne un nouveau rendu que s'il apprend quelque chose : le
-  // GPS d'un piéton renvoie plusieurs points par seconde, dont l'essentiel est
-  // du bruit à l'échelle d'une boîte aux lettres. En dessous de ces seuils, la
-  // position est mémorisée sans redessiner la carte ni recalculer les distances.
-  var MAJ_MIN_MS = 4000;
-  var MAJ_MIN_M = 12;
-
+  // Un relevé ne déplace que le point bleu : plus aucune liste ne dépend de la
+  // position, et redessiner la card sous le doigt à chaque relevé ferait
+  // manquer des appuis.
   function startSuiviWatch() {
-    if (!navigator.geolocation) {
-      els.suiviGeoStatus.innerHTML = suiviGeoStatusHTML("Géolocalisation non disponible sur cet appareil.", "tag-warn");
-      return;
-    }
-    if (suiviWatchId !== null) return;
-    if (!suiviUserPos) els.suiviGeoStatus.innerHTML = suiviGeoStatusHTML("Recherche de la position…");
+    if (!navigator.geolocation || suiviWatchId !== null) return;
     suiviWatchId = navigator.geolocation.watchPosition(function (pos) {
-      var suivante = {
+      suiviUserPos = {
         lat: pos.coords.latitude, lon: pos.coords.longitude,
         accuracy: pos.coords.accuracy, horodatage: Date.now()
       };
-      var maintenant = Date.now();
-      var bouge = !suiviUserPos ||
-        MapView.distanceMeters(suiviUserPos.lat, suiviUserPos.lon, suivante.lat, suivante.lon) >= MAJ_MIN_M;
-      var premier = !suiviUserPos;
-      suiviUserPos = suivante;
-      els.suiviGeoStatus.innerHTML = suiviGeoStatusHTML("📡 Position à jour (précision ~" + Math.round(pos.coords.accuracy || 0) + " m)");
-      if (!suiviCentered) {
+      suiviMap.setUserMarker(suiviUserPos.lat, suiviUserPos.lon, suiviUserPos.accuracy);
+      // Dans la Tournée actuelle, c'est la card qui commande le cadrage.
+      if (!suiviCentered && suiviTab === "generale") {
         suiviMap.centerOn(suiviUserPos.lat, suiviUserPos.lon, 15);
         suiviCentered = true;
       }
-      if (!premier && !bouge && maintenant - suiviDernierRelevé < MAJ_MIN_MS) {
-        // Immobile : on repositionne le seul marqueur, sans refaire l'écran.
-        suiviMap.setUserMarker(suiviUserPos.lat, suiviUserPos.lon, suiviUserPos.accuracy);
-        return;
-      }
-      suiviDernierRelevé = maintenant;
-      renderSuivi();
-    }, function (err) {
-      els.suiviGeoStatus.innerHTML = suiviGeoStatusHTML("Position indisponible (" + err.message + ").", "tag-warn");
+    }, function () {
+      // Position indisponible : la carte reste simplement sans point bleu.
     }, { enableHighAccuracy: true, maximumAge: 10000, timeout: 20000 });
   }
 
@@ -2608,33 +2625,6 @@ window.UI = (function () {
     }
   }
 
-  function fmtDistance(m) {
-    return m < 1000 ? Math.round(m) + " m" : (m / 1000).toFixed(1) + " km";
-  }
-
-  function proximityCardHTML(item) {
-    var row = item.row, entry = item.entry;
-    var names = S.namesOf(row).join(" / ") || "(sans nom)";
-    var addr = [row.numero, row.rue].filter(Boolean).join(" ");
-    var lieu = S.communeLabelOf(row);
-    var objets = itemBadgesHTML(entry);
-    if (entry.statut === Prep.STATUTS.ABANDONNE) {
-      objets += '<span class="addr-motif">⊘ ' + escapeHtml(Prep.motifLabel(entry.motif)) + '</span>';
-    }
-    return (
-      '<div class="proximity-card is-' + entry.statut + '">' +
-        '<div class="proximity-head">' +
-          '<div><div class="card-title">' + escapeHtml(names) + '</div>' +
-          '<div class="card-line muted">' + escapeHtml([addr, lieu].filter(Boolean).join(" · ")) + '</div></div>' +
-          (item.distance !== undefined ? '<span class="proximity-dist">' + fmtDistance(item.distance) + '</span>' : '') +
-        '</div>' +
-        '<div class="proximity-foot">' +
-          '<div class="proximity-objects">' + objets + '</div>' +
-          addrActionsHTML(row.id, entry) +
-        '</div>' +
-      '</div>'
-    );
-  }
 
   // Le résumé prend la place d'un tiers d'écran pour trois nombres. La barre,
   // elle, dit l'essentiel en 8 pixels de haut : elle reste toujours visible,
@@ -2718,87 +2708,108 @@ window.UI = (function () {
     var groups = buildTourneeGroups(S.getIdTournee());
     renderSuiviProgress(groups);
     renderSuiviTournee(groups);
-    renderSuiviCarte();
+    renderSuiviCarte(groups);
   }
 
-  // Carte opérationnelle de la Course.
+  // Carte de la Course.
   //
-  // Deux principes : la carte montre *tous* les points à distribuer, quelle que
-  // soit la distance — sans quoi on ne voit pas comment la tournée se répartit —
-  // et chaque pastille porte la couleur de sa commune, rien d'autre. L'état de
-  // distribution ne change que l'intensité : plein pour ce qui reste, effacé
-  // pour ce qui est fait. La liste en dessous classe les mêmes adresses de la
-  // plus proche à la plus lointaine : elle répond à « qu'est-ce qui est à
-  // portée de main » sans qu'on ait à lui régler un rayon — sur le terrain,
-  // c'est l'ordre qui renseigne, pas le seuil.
-  function renderSuiviCarte() {
+  // Tournée actuelle : seuls les points de la card active — ses objets suivis
+  // et les repères de ses numéros standard — sur le fond de la trace. Une card
+  // qui n'a rien à situer (card finale, adresses sans position, tournée close
+  // ou vide) efface la carte plutôt que de montrer un fond vide.
+  //
+  // Vue générale : les objets suivis de toute la tournée ; ceux de la card
+  // active restent pleins, les autres s'estompent. Toucher un marqueur ouvre
+  // sa card.
+  //
+  // L'état de distribution n'est qu'une nuance : plein pour ce qui reste,
+  // effacé pour ce qui est traité.
+  function renderSuiviCarte(groups) {
     var idT = S.getIdTournee();
-    var entries = Prep.listEntries(idT);
-    var tous = [], aProximite = [], withoutGPS = 0;
+    groups = groups || buildTourneeGroups(idT);
+    var active = Prep.estCloturee(idT) ? null : groups[tourneeIndex] || null;
 
-    entries.forEach(function (e) {
-      var row = S.findRow(e.addressId);
-      if (!row) return;
-      var pos = S.positionUtile(row);
-      if (!pos) { withoutGPS++; return; }
-      var item = { row: row, entry: e, pos: pos };
-      tous.push(item);
-      if (!suiviUserPos) return;
-      item.distance = MapView.distanceMeters(suiviUserPos.lat, suiviUserPos.lon, pos.lat, pos.lon);
-      aProximite.push(item);
-    });
-    aProximite.sort(function (a, b) { return a.distance - b.distance; });
+    var points = [];
+    if (suiviTab === "generale") {
+      groups.forEach(function (g) { points = points.concat(pointsDeCard(g, g !== active)); });
+    } else if (active) {
+      points = pointsDeCard(active, false);
+    }
+    suiviPoints = points;
 
-    // --- carte ---
+    els.pageSuivi.classList.toggle("carte-repliee", !!S.getSettings().courseCarteRepliee);
+    els.pageSuivi.classList.toggle("carte-sans-objet", !points.length);
     suiviMap.ensureMap("suiviMapContainer");
-    var points = tous.map(function (item) {
-      var traite = item.entry.statut !== Prep.STATUTS.A_FAIRE;
-      return {
-        id: item.row.id,
-        lat: item.pos.lat, lon: item.pos.lon,
-        color: S.getCommuneColor(item.row.commune),
-        size: traite ? 11 : 15,
-        creux: item.entry.statut === Prep.STATUTS.DISTRIBUE,
-        opacity: traite ? 0.5 : 1,
-        popupHtml: "<strong>" + escapeHtml(S.namesOf(item.row).join(" / ") || "(sans nom)") + "</strong><br>" +
-          escapeHtml([item.row.numero, item.row.rue].filter(Boolean).join(" ")) + "<br>" +
-          escapeHtml(S.communeLabelOf(item.row)) + "<br>" + escapeHtml(objetsTexte(item.entry))
-      };
-    });
-    // Cadrage initial sur l'ensemble de la tournée, tant qu'aucune position
-    // n'est connue — et seulement quand la carte est réellement à l'écran :
-    // un conteneur masqué n'a pas de dimensions, donc pas de cadrage possible.
-    var carteVisible = suiviTab === "carte" && els.suiviMapContainer.offsetHeight > 0;
-    var cadrer = carteVisible && !suiviCarteCadree && !suiviUserPos && points.length > 0;
-    if (cadrer) suiviCarteCadree = true;
-    suiviMap.renderPoints(points, { fit: cadrer });
-    if (suiviUserPos) suiviMap.setUserMarker(suiviUserPos.lat, suiviUserPos.lon, suiviUserPos.accuracy);
+    suiviMap.renderPoints(points);
+  }
 
-    // --- liste de proximité ---
-    if (!entries.length) {
-      els.suiviProximityList.innerHTML = "";
-      els.suiviEmptyState.style.display = "block";
-      els.suiviEmptyState.textContent = "Aucune adresse dans la tournée. Ajoute des lettres/colis depuis la page Préparation.";
-      return;
+  function pointsDeCard(g, estompe) {
+    var points = [];
+    g.items.forEach(function (it) {
+      var pos = S.positionUtile(it.row);
+      if (!pos) return;
+      points.push({
+        id: it.row.id, lat: pos.lat, lon: pos.lon,
+        html: marqueurObjetsHTML(it, estompe),
+        zIndexOffset: estompe ? 0 : 500,
+        popupHtml: estompe ? "" : "<strong>" + escapeHtml(S.namesOf(it.row).join(" / ") || "(sans nom)") + "</strong><br>" +
+          escapeHtml([it.row.numero, it.row.rue].filter(Boolean).join(" ")) + "<br>" +
+          escapeHtml(S.communeLabelOf(it.row)) + "<br>" + escapeHtml(objetsTexte(it.entry))
+      });
+    });
+    if (estompe) return points;
+    numerosReperes(g.standards).forEach(function (it) {
+      var pos = S.positionUtile(it.row);
+      points.push({
+        id: it.row.id, lat: pos.lat, lon: pos.lon, zIndexOffset: 400,
+        html: '<div class="mq std-num mq-num is-' + it.entry.statut + '">' + escapeHtml(it.row.numero.trim()) + '</div>'
+      });
+    });
+    return points;
+  }
+
+  // Un point à objets suivis porte l'icône de son type, ou une pile de colis
+  // quand plusieurs types s'y mêlent ; le nombre, dans la pastille des
+  // adresses, dès qu'il dépasse un. Le liseré dit la commune.
+  function marqueurObjetsHTML(it, estompe) {
+    var types = Prep.TYPES.filter(function (t) { return it.entry[t.key] > 0; });
+    var n = Prep.countItems(it.entry);
+    var icone = types.length === 1 ? types[0].icon : '<span class="mq-pile"><span>📦</span><span>📦</span></span>';
+    return '<div class="mq mq-objet is-' + it.entry.statut + (estompe ? " mq-estompe" : "") + '" ' +
+      'style="border-color:' + S.getCommuneColor(it.row.commune) + ';">' +
+      '<span class="item-badge' + (n > 1 ? " multi" : "") + '"><span class="item-icon">' + icone + '</span>' +
+        (n > 1 ? '<span class="item-count">' + n + '</span>' : "") +
+      '</span></div>';
+  }
+
+  // Repères des numéros standard : de simples jalons géographiques. Au-delà de
+  // six, un sur deux — pairs et impairs chacun de leur côté, pour que les deux
+  // trottoirs restent jalonnés. La parité se lit sur le nombre en tête
+  // (« 9-2 » est impair) ; sans nombre ni position, pas de repère.
+  var REPERES_TOUS_JUSQUA = 6;
+
+  function numerosReperes(standards) {
+    var numerotes = standards.filter(function (it) {
+      return !isNaN(parseInt(it.row.numero, 10)) && S.positionUtile(it.row);
+    });
+    if (numerotes.length <= REPERES_TOUS_JUSQUA) return numerotes;
+    var vus = [0, 0];
+    return numerotes.filter(function (it) {
+      return vus[parseInt(it.row.numero, 10) % 2]++ % 2 === 0;
+    });
+  }
+
+  // Vue générale : un marqueur ramène à sa card, dans la Tournée actuelle.
+  function ouvrirCardDuPoint(addrId) {
+    if (suiviTab !== "generale") return;
+    var groups = buildTourneeGroups(S.getIdTournee());
+    for (var i = 0; i < groups.length; i++) {
+      if (groups[i].items.some(function (it) { return it.row.id === addrId; })) {
+        tourneeIndex = i;
+        setSuiviTab("tournee");
+        return;
+      }
     }
-    if (!suiviUserPos) {
-      els.suiviProximityList.innerHTML = "";
-      els.suiviEmptyState.style.display = "block";
-      els.suiviEmptyState.textContent = "En attente de ta position GPS pour calculer les distances…";
-      return;
-    }
-    if (!aProximite.length) {
-      els.suiviProximityList.innerHTML = "";
-      els.suiviEmptyState.style.display = "block";
-      els.suiviEmptyState.textContent = "Aucune adresse localisée dans la tournée" +
-        (withoutGPS ? " · " + withoutGPS + " adresse(s) sans coordonnées GPS" : "") + ".";
-      return;
-    }
-    els.suiviEmptyState.style.display = "none";
-    var note = withoutGPS
-      ? '<div class="empty" style="padding:10px;">' + withoutGPS + " adresse(s) sans coordonnées GPS." + '</div>'
-      : "";
-    els.suiviProximityList.innerHTML = aProximite.map(proximityCardHTML).join("") + note;
   }
 
   // ---------------------------------------------------------------------
@@ -3152,6 +3163,7 @@ window.UI = (function () {
         '</div>' +
         '<label class="switch-row"><input type="checkbox" id="admScanPivot" ' + (s.scanPivotInverse ? "checked" : "") + '> Inverser le sens de rotation de l\'écran de scan (téléphone verrouillé en portrait)</label>' +
         '<label class="switch-row"><input type="checkbox" id="admFleches" ' + (s.flechesSens !== false ? "checked" : "") + '> Flèches de sens sur la trace (au zoom rapproché)</label>' +
+        '<label class="switch-row"><input type="checkbox" id="admTraceCourse" ' + (s.traceCourse !== false ? "checked" : "") + '> Trace globale de la tournée sur les cartes de la Course</label>' +
         '<div class="toolbar">' +
           '<button data-action="admin-sample">Charger un exemple</button>' +
           '<button class="danger" data-action="admin-clear">Vider les données</button>' +
@@ -3262,6 +3274,11 @@ window.UI = (function () {
     document.getElementById("admFleches").addEventListener("change", function (e) {
       S.setSetting("flechesSens", e.target.checked);
       Parcours.rafraichirAffichage();
+    });
+    document.getElementById("admTraceCourse").addEventListener("change", function (e) {
+      S.setSetting("traceCourse", e.target.checked);
+      // La Course refait sa trace à son ouverture ; retirée, elle part tout de suite.
+      if (!e.target.checked) Parcours.effacer(suiviMap);
     });
     bindPileFichiers();
     bindExportSelection();
@@ -3605,6 +3622,12 @@ window.UI = (function () {
         suiviResumeDeplie = !suiviResumeDeplie;
         renderSuiviProgress();
         break;
+      case "course-quitter":
+        courseQuitter();
+        break;
+      case "course-carte-basculer":
+        courseCarteBasculer();
+        break;
       case "tournee-prev":
         tourneeNav(-1);
         break;
@@ -3829,13 +3852,23 @@ window.UI = (function () {
     els.prepZonesWrap = document.getElementById("prepZonesWrap");
     els.prepCommuneSummary = document.getElementById("prepCommuneSummary");
 
+    els.pageSuivi = document.getElementById("page-suivi");
     els.suiviProgress = document.getElementById("suiviProgress");
     els.suiviSubNav = document.getElementById("suiviSubNav");
     els.suiviTourneeWrap = document.getElementById("suiviTourneeWrap");
-    els.suiviGeoStatus = document.getElementById("suiviGeoStatus");
     els.suiviMapContainer = document.getElementById("suiviMapContainer");
-    els.suiviProximityList = document.getElementById("suiviProximityList");
-    els.suiviEmptyState = document.getElementById("suiviEmptyState");
+    els.courseEtape = document.getElementById("courseEtape");
+    els.coursePanneau = document.getElementById("coursePanneau");
+    suiviMap.onSelect(ouvrirCardDuPoint);
+
+    // Rotation du téléphone : le CSS redistribue la grille ; la carte, elle,
+    // doit se remesurer et recadrer la card active, qui n'a pas bougé.
+    if (window.matchMedia) {
+      var paysage = window.matchMedia("(orientation: landscape)");
+      var surRotation = function () { if (currentMainPage === "suivi") suiviMap.invalidateSize(cadrerCarte); };
+      if (paysage.addEventListener) paysage.addEventListener("change", surRotation);
+      else if (paysage.addListener) paysage.addListener(surRotation);
+    }
 
     document.body.addEventListener("click", function (e) {
       // Un clic ailleurs referme les propositions d'autocomplétion.

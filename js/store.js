@@ -57,7 +57,13 @@ window.Store = (function () {
       // Flèches de sens sur la trace : actives par défaut. C'est le seul
       // élément que la carte des Données pose par-dessus le trait, et il dit la
       // seule chose qu'un trait ne sait pas dire — dans quel sens on le suit.
-      flechesSens: true
+      flechesSens: true,
+      // Trace de la tournée en fond des cartes de la Course : on peut la
+      // retirer pour ne garder que les marqueurs.
+      traceCourse: true,
+      // Carte de la Tournée actuelle repliée par l'utilisateur : le choix tient
+      // d'une card à l'autre et d'une session à l'autre.
+      courseCarteRepliee: false
     }
   };
 

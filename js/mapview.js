@@ -28,27 +28,6 @@ window.MapView = (function () {
     return R * c;
   }
 
-  // Pastille d'un point à distribuer. La couleur porte la commune ; l'état
-  // n'est qu'une nuance — pleine pour ce qui reste à faire, effacée une fois
-  // traité. Une carte de terrain se lit au premier regard ou ne se lit pas.
-  function markerIcon(color, size, opts) {
-    size = size || 16;
-    opts = opts || {};
-    var style = "width:" + size + "px;height:" + size + "px;border-radius:50%;" +
-      "border:2px solid #fff;box-shadow:0 0 0 1px rgba(0,0,0,.3);" +
-      "background:" + (opts.creux ? "transparent" : color) + ";";
-    // Anneau : plus épais que le liseré blanc d'une pastille pleine, sans quoi
-    // un point traité disparaîtrait complètement sur un fond de carte chargé.
-    if (opts.creux) style += "border:3px solid " + color + ";box-shadow:none;";
-    if (opts.opacity !== undefined) style += "opacity:" + opts.opacity + ";";
-    return L.divIcon({
-      className: "",
-      html: '<div style="' + style + '"></div>',
-      iconSize: [size, size],
-      iconAnchor: [size / 2, size / 2]
-    });
-  }
-
   function createInstance() {
     var map = null;
     var markersLayer = null;
@@ -82,18 +61,18 @@ window.MapView = (function () {
 
     function onSelect(cb) { onSelectCallback = cb; }
 
-    // Rendu générique de points (Page 3 - Course) : chaque point porte sa
-    // propre couleur et son propre contenu de popup, calculés par l'appelant.
-    function renderPoints(points, opts) {
+    // Rendu générique de points (Page 3 - Course) : chaque point porte son
+    // propre dessin et son propre contenu de popup, calculés par l'appelant.
+    // Sans taille imposée, le marqueur prend celle de son contenu — une
+    // pastille de comptage s'élargit avec son nombre ; le CSS le centre.
+    function renderPoints(points) {
       if (!map) return;
-      opts = opts || {};
       markersLayer.clearLayers();
       markersById = {};
-      var coords = [];
       points.forEach(function (p) {
-        coords.push([p.lat, p.lon]);
         var marker = L.marker([p.lat, p.lon], {
-          icon: markerIcon(p.color || "#2f6b4f", p.size, { creux: p.creux, opacity: p.opacity })
+          icon: L.divIcon({ className: "", html: p.html, iconSize: null }),
+          zIndexOffset: p.zIndexOffset || 0
         });
         if (p.popupHtml) marker.bindPopup(p.popupHtml);
         if (p.id) {
@@ -102,9 +81,6 @@ window.MapView = (function () {
         }
         marker.addTo(markersLayer);
       });
-      if (coords.length && opts.fit) {
-        try { map.fitBounds(coords, { padding: [30, 30], maxZoom: 15 }); } catch (e) { /* ignore */ }
-      }
     }
 
     // Position du livreur : volontairement d'une autre nature que les

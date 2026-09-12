@@ -111,25 +111,30 @@
     </div>
   </div>
 
-  <!-- ================= PAGE 3 : COURSE ================= -->
-  <div class="page" id="page-suivi">
+  <!-- ================= PAGE 3 : COURSE (plein écran) =================
+       Trois zones posées sur une grille : la barre, la carte, le panneau.
+       Le CSS les range selon l'orientation ; le DOM, lui, ne bouge jamais,
+       si bien qu'une rotation ne perd ni la card, ni la carte, ni leur état. -->
+  <div class="page vue-tournee" id="page-suivi">
 
-    <div class="suivi-progress" id="suiviProgress"></div>
-
-    <div class="subnav" id="suiviSubNav">
-      <button data-suivitab="tournee" class="active">🚚 Tournée</button>
-      <button data-suivitab="carte">🗺️ Carte</button>
+    <div class="course-barre">
+      <button class="course-quitter" data-action="course-quitter" aria-label="Quitter la Course">✕</button>
+      <div class="subnav" id="suiviSubNav">
+        <button data-suivitab="generale">Vue générale</button>
+        <button data-suivitab="tournee" class="active">Tournée actuelle</button>
+      </div>
+      <div class="course-etape" id="courseEtape"></div>
+      <button class="course-carte-rouvrir" data-action="course-carte-basculer" aria-label="Afficher la carte">🗺️</button>
     </div>
 
-    <div class="suivi-view active" id="suivi-view-tournee">
-      <div id="suiviTourneeWrap"></div>
-    </div>
-
-    <div class="suivi-view" id="suivi-view-carte">
-      <div class="field-inline" id="suiviGeoStatus"></div>
+    <div class="course-carte">
       <div id="suiviMapContainer"></div>
-      <div id="suiviProximityList"></div>
-      <div class="empty" id="suiviEmptyState" style="display:none;"></div>
+      <button class="course-carte-replier" data-action="course-carte-basculer" aria-label="Replier la carte"></button>
+    </div>
+
+    <div class="course-panneau" id="coursePanneau">
+      <div class="suivi-progress" id="suiviProgress"></div>
+      <div id="suiviTourneeWrap"></div>
     </div>
 
   </div>
