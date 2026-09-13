@@ -11,7 +11,6 @@ window.Prep = (function () {
   var ZONES_KEY = "atournee_prep_zones_v1";
   var STD_KEY = "atournee_prep_std_v1";
   var RAPPORTS_KEY = "atournee_rapports_v1";
-  var CLOTURES_KEY = "atournee_clotures_v1";
   // { [id_tournee]: { [addressId]: { lettres:n, colis:n, presse:n, statut:s, motif:'', horodatage:iso } } }
   var state = {};
   // Zones de courrier standard retenues pour la tournée, désignées par leur
@@ -33,11 +32,6 @@ window.Prep = (function () {
   // généré à la clôture — cette liste ne relit jamais la tournée, elle garde
   // une photographie.
   var rapports = [];
-  // Verrou de clôture, distinct de l'archive : { [id_tournee]: rapportId }.
-  // Supprimer un vieux rapport dans l'archive ne doit jamais déverrouiller une
-  // tournée en cours ; seule "Nouvelle tournée" (resetTournee) le fait, au
-  // même titre qu'elle vide déjà zones et statuts.
-  var clotures = {};
 
   // Dernière note connue par adresse, au moment où un rapport de clôture l'a
   // déjà signalée : { [addressId]: texte }. Sert à ne montrer, dans le
@@ -227,35 +221,16 @@ window.Prep = (function () {
     try { localStorage.setItem(RAPPORTS_KEY, JSON.stringify(rapports)); } catch (e) { /* ignore */ }
   }
 
-  function loadClotures() {
-    try {
-      var raw = localStorage.getItem(CLOTURES_KEY);
-      clotures = raw ? JSON.parse(raw) : {};
-    } catch (e) { clotures = {}; }
-  }
-
-  function persistClotures() {
-    try { localStorage.setItem(CLOTURES_KEY, JSON.stringify(clotures)); } catch (e) { /* ignore */ }
-  }
-
   function uidRapport() {
     return "rap-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8);
-  }
-
-  function estCloturee(idTournee) {
-    return !!clotures[idTournee];
   }
 
   function getRapport(id) {
     return rapports.filter(function (r) { return r.id === id; })[0] || null;
   }
 
-  function getRapportActif(idTournee) {
-    return getRapport(clotures[idTournee]);
-  }
-
   // Archive un rapport déjà généré (lecture seule sur les données métier, la
-  // construction du HTML se fait ailleurs) et pose le verrou de clôture.
+  // construction du HTML se fait ailleurs).
   function cloturer(idTournee, html, resume) {
     var rapport = {
       id: uidRapport(), idTournee: idTournee, dateFermeture: nowISO(),
@@ -264,8 +239,6 @@ window.Prep = (function () {
     };
     rapports.unshift(rapport);
     persistRapports();
-    clotures[idTournee] = rapport.id;
-    persistClotures();
     return rapport;
   }
 
@@ -284,7 +257,8 @@ window.Prep = (function () {
     loadZones();
     loadStandard();
     loadRapports();
-    loadClotures();
+    // Reliquat de l'ancien verrou de clôture, levé désormais à la clôture même.
+    try { localStorage.removeItem("atournee_clotures_v1"); } catch (e) { /* ignore */ }
     try {
       var raw = localStorage.getItem(KEY);
       state = raw ? JSON.parse(raw) : {};
@@ -453,25 +427,6 @@ window.Prep = (function () {
     persistZones();
     delete standard[idTournee];
     persistStandard();
-    // Repartir à zéro est le seul geste qui lève le verrou de clôture : les
-    // rapports déjà archivés restent en place, ils ne décrivent pas la
-    // tournée qui recommence.
-    delete clotures[idTournee];
-    persistClotures();
-  }
-
-  // Vide la préparation (quantités, zones standard, statuts) d'une tournée
-  // sans toucher au verrou de clôture ni aux rapports archivés : c'est ce que
-  // la clôture appelle pour que la tournée du lendemain reparte d'une
-  // préparation vierge, sans pour autant déverrouiller celle qui vient de se
-  // terminer.
-  function viderPreparation(idTournee) {
-    delete state[idTournee];
-    persist();
-    delete zones[idTournee];
-    persistZones();
-    delete standard[idTournee];
-    persistStandard();
   }
 
   return {
@@ -503,13 +458,10 @@ window.Prep = (function () {
     totals: totals,
     progress: progress,
     resetTournee: resetTournee,
-    viderPreparation: viderPreparation,
 
-    estCloturee: estCloturee,
     cloturer: cloturer,
     listRapports: listRapports,
     getRapport: getRapport,
-    getRapportActif: getRapportActif,
     supprimerRapport: supprimerRapport
   };
 })();

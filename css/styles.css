@@ -466,7 +466,6 @@ mark{background:#fff2a8;color:inherit;border-radius:3px;padding:0 1px;}
   background:var(--accent);color:#fff;font-weight:800;font-size:15px;cursor:pointer;
 }
 .cloture-btn:active{opacity:.85;}
-.tournee-cloturee .tournee-card-title{color:var(--muted);}
 
 /* --- panneau de motifs (bas d'écran) --- */
 .sheet-overlay{

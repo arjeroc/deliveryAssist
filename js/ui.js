@@ -1681,7 +1681,6 @@ window.UI = (function () {
   // ✓ et ⊘ font aussi office de retour arrière : ré-appuyer sur le bouton
   // actif remet l'adresse "à faire", sans passer par un menu.
   function addrValider(addrId) {
-    if (tourneeVerrouillee()) return;
     var entry = Prep.getEntry(S.getIdTournee(), addrId);
     if (entry.statut === Prep.STATUTS.DISTRIBUE) {
       applyStatut([addrId], Prep.STATUTS.A_FAIRE, "", "Adresse remise à faire.");
@@ -1695,7 +1694,6 @@ window.UI = (function () {
   }
 
   function addrAbandonner(addrId) {
-    if (tourneeVerrouillee()) return;
     var entry = Prep.getEntry(S.getIdTournee(), addrId);
     if (entry.statut === Prep.STATUTS.ABANDONNE) {
       applyStatut([addrId], Prep.STATUTS.A_FAIRE, "", "Adresse remise à faire.");
@@ -2021,7 +2019,6 @@ window.UI = (function () {
       renderSuiviTournee();
       return;
     }
-    if (tourneeVerrouillee()) return;
     var entry = Prep.getStandardEntry(S.getIdTournee(), addrId);
     if (entry.statut === Prep.STATUTS.DISTRIBUE) {
       applyStatutStandard([addrId], Prep.STATUTS.A_FAIRE, "", "Numéro remis à faire.");
@@ -2088,7 +2085,7 @@ window.UI = (function () {
   }
 
   // ---------------------------------------------------------------------
-  // Clôture de tournée : récapitulatif, mini-rapport HTML, verrouillage.
+  // Clôture de tournée : récapitulatif, mini-rapport HTML, remise à zéro.
   // ---------------------------------------------------------------------
 
   function formatDateHeure(iso) {
@@ -2115,7 +2112,7 @@ window.UI = (function () {
   }
 
   // Bilan de la tournée à l'instant présent — utilisé aussi bien par la
-  // feuille de confirmation, la vue verrouillée après clôture, et le rapport
+  // feuille de confirmation, la card finale et le rapport
   // HTML : une seule règle de calcul, jamais recalculée différemment selon
   // l'endroit où elle s'affiche.
   function tourneeBilan(idT, groups) {
@@ -2168,8 +2165,6 @@ window.UI = (function () {
     };
   }
 
-  // Accepte aussi bien le bilan complet (calculé en direct) que le résumé
-  // allégé archivé avec un rapport — les deux portent les mêmes totaux.
   function recapLignesHTML(bilan) {
     return '<div class="kv"><span>Total éléments</span><strong>' + bilan.total + '</strong></div>' +
       '<div class="kv"><span>Distribués</span><strong>' + bilan.distribuees + '</strong></div>' +
@@ -2195,7 +2190,6 @@ window.UI = (function () {
   }
 
   function ouvrirClotureSheet() {
-    if (tourneeVerrouillee()) return;
     var idT = S.getIdTournee();
     var bilan = tourneeBilan(idT, buildTourneeGroups(idT));
     sheetTarget = null;
@@ -2357,17 +2351,16 @@ window.UI = (function () {
       notesCount: bilan.notes.length, categories: bilan.categories, debut: bilan.debut
     };
     Prep.cloturer(idT, html, resumeArchive);
-    // La tournée est close : sa préparation (quantités, zones, statuts) est
-    // vidée pour repartir propre la prochaine fois, sans lever le verrou de
-    // clôture qui vient d'être posé.
-    Prep.viderPreparation(idT);
+    // Le rapport est archivé : la tournée est vidée entièrement, verrou
+    // compris, et on quitte la Course pour la Préparation — la suivante peut
+    // commencer tout de suite, sans passer par « Nouvelle tournée ».
+    Prep.resetTournee(idT);
     prepZoneIndex = 0;
     tourneeIndex = 0;
     closeSheet();
     ouvrirRapportDansOnglet(html);
-    toast("Tournée clôturée. Rapport généré.", "ok");
-    renderPrep();
-    renderSuivi();
+    toast("Tournée clôturée. Rapport archivé dans les Réglages.", "ok");
+    showMainPage("prep");
   }
 
   function rapportConsulter(id) {
@@ -2381,24 +2374,6 @@ window.UI = (function () {
     telecharger(r.html, "text/html", "rapport_" + r.idTournee + "_" + (r.dateFermeture || "").slice(0, 10) + ".html");
   }
 
-  function renderSuiviCloturee(idT, groups) {
-    var rapport = Prep.getRapportActif(idT);
-    var bilan = (rapport && rapport.resume && rapport.resume.categories) ? rapport.resume : tourneeBilan(idT, groups);
-    var quand = rapport ? formatDateHeure(rapport.fin) : "";
-    els.suiviTourneeWrap.innerHTML =
-      '<div class="tournee-card tournee-cloturee">' +
-        '<div class="tournee-card-head"><div class="tournee-card-title">🔒 Tournée clôturée</div></div>' +
-        (quand ? '<div class="tournee-card-sub">Clôturée le ' + escapeHtml(quand) + '</div>' : "") +
-        '<div class="tournee-finale-recap">' + recapLignesHTML(bilan) + '</div>' +
-        (rapport
-          ? '<div class="zone-actions">' +
-              '<button class="zone-btn" data-action="rapport-telecharger" data-id="' + escapeHtml(rapport.id) + '">⬇️ Télécharger</button>' +
-              '<button class="zone-btn ok" data-action="rapport-consulter" data-id="' + escapeHtml(rapport.id) + '">📄 Voir le rapport</button>' +
-            '</div>'
-          : "") +
-      '</div>';
-  }
-
   function renderSuiviTournee(groups) {
     var idT = S.getIdTournee();
     groups = groups || buildTourneeGroups(idT);
@@ -2406,10 +2381,6 @@ window.UI = (function () {
     // Le carrousel se pilote depuis la barre de la Course : il n'y a de flèches
     // que s'il y a des étapes à parcourir.
     els.courseEtape.innerHTML = "";
-
-    // Une tournée clôturée n'a plus de carrousel à parcourir : la vue
-    // verrouillée remplace tout, quel que soit l'index où on l'a laissée.
-    if (Prep.estCloturee(idT)) { renderSuiviCloturee(idT, groups); return; }
 
     clampTourneeIndex(groups);
 
@@ -2481,15 +2452,6 @@ window.UI = (function () {
     return buildTourneeGroups(S.getIdTournee()).filter(function (g) { return g.key === key; })[0];
   }
 
-  // Point de garde unique pour toute action qui changerait l'état de
-  // distribution : une tournée clôturée ne se modifie plus, dans l'onglet
-  // Tournée comme dans l'onglet Carte (qui partage les mêmes actions).
-  function tourneeVerrouillee() {
-    if (!Prep.estCloturee(S.getIdTournee())) return false;
-    toast("Tournée déjà clôturée : aucune modification possible.", "warn");
-    return true;
-  }
-
   function idsRestants(g) {
     return g.items.filter(function (it) { return it.entry.statut === Prep.STATUTS.A_FAIRE; })
                   .map(function (it) { return it.row.id; });
@@ -2513,7 +2475,6 @@ window.UI = (function () {
   // que se validait le courrier standard. Rouvrir, en revanche, en garde une —
   // c'est le geste qui défait du travail déjà fait.
   function etapeValider(key) {
-    if (tourneeVerrouillee()) return;
     var g = findGroup(key);
     if (!g) return;
     var ids = idsRestants(g), idsStd = idsStdRestants(g);
@@ -2523,7 +2484,6 @@ window.UI = (function () {
   }
 
   function etapeAbandonner(key) {
-    if (tourneeVerrouillee()) return;
     var g = findGroup(key);
     if (!g) return;
     var ids = idsRestants(g), idsStd = idsStdRestants(g);
@@ -2534,7 +2494,6 @@ window.UI = (function () {
   }
 
   function etapeRouvrir(key) {
-    if (tourneeVerrouillee()) return;
     var g = findGroup(key);
     if (!g) return;
     if (!confirmAction("Remettre toute la distribution de " + g.libelle + " à faire ?")) return;
@@ -2581,7 +2540,6 @@ window.UI = (function () {
   // ré-appuyer quand tout est distribué remet à faire, et un premier appui
   // rattrape aussi les numéros qui avaient été abandonnés.
   function zoneStdValider(key) {
-    if (tourneeVerrouillee()) return;
     var g = findGroup(key);
     if (!g) return;
     if (g.stdDistribuees === g.standards.length) {
@@ -2593,7 +2551,6 @@ window.UI = (function () {
   }
 
   function zoneStdAbandonner(key) {
-    if (tourneeVerrouillee()) return;
     var g = findGroup(key);
     if (!g) return;
     if (g.stdAbandonnees === g.standards.length) {
@@ -2723,8 +2680,8 @@ window.UI = (function () {
   //
   // Tournée actuelle : seuls les points de la card active — ses objets suivis
   // et les repères de ses numéros standard — sur le fond de la trace. Une card
-  // qui n'a rien à situer (card finale, adresses sans position, tournée close
-  // ou vide) efface la carte plutôt que de montrer un fond vide.
+  // qui n'a rien à situer (card finale, adresses sans position, tournée
+  // vide) efface la carte plutôt que de montrer un fond vide.
   //
   // Vue générale : les objets suivis de toute la tournée ; ceux de la card
   // active restent pleins, les autres s'estompent. Toucher un marqueur ouvre
@@ -2735,7 +2692,7 @@ window.UI = (function () {
   function renderSuiviCarte(groups) {
     var idT = S.getIdTournee();
     groups = groups || buildTourneeGroups(idT);
-    var active = Prep.estCloturee(idT) ? null : groups[tourneeIndex] || null;
+    var active = groups[tourneeIndex] || null;
 
     var points = [];
     if (suiviTab === "generale") {
@@ -3089,8 +3046,7 @@ window.UI = (function () {
   // --- Réglages : archive des rapports de fin de tournée ---------------------
   //
   // L'espace demandé par la clôture (point 8) : consulter, télécharger ou
-  // supprimer un rapport déjà généré. Supprimer un rapport ne touche jamais au
-  // verrou de clôture de la tournée en cours — voir Prep.supprimerRapport.
+  // supprimer un rapport déjà généré.
   function rapportLigneHTML(r) {
     var quand = formatDateHeure(r.dateFermeture);
     var resume = (r.resume && r.resume.total !== undefined)
