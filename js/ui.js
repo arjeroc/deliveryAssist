@@ -1576,7 +1576,6 @@ window.UI = (function () {
     var estDistribue = entry.statut === Prep.STATUTS.DISTRIBUE;
     var estAbandonne = entry.statut === Prep.STATUTS.ABANDONNE;
     return '<div class="addr-actions">' +
-      '<button class="addr-btn nav" data-action="addr-naviguer" data-id="' + addrId + '" aria-label="Ouvrir la navigation">🧭</button>' +
       '<button class="addr-btn stop' + (estAbandonne ? " active" : "") + '" data-action="addr-abandonner" data-id="' + addrId + '" aria-label="Ne pas distribuer">⊘</button>' +
       '<button class="addr-btn ok' + (estDistribue ? " active" : "") + '" data-action="addr-valider" data-id="' + addrId + '" aria-label="Valider la distribution">✓</button>' +
     '</div>';
@@ -1760,9 +1759,10 @@ window.UI = (function () {
   // défaut, pour rester compact sur le terrain ; l'état ne survit pas au
   // rechargement, il n'a rien d'une donnée métier.
   var tourneeAddrDepliees = {};
-  // Zone dont le bloc standard attend qu'on désigne un numéro de destination.
-  // Une seule card est à l'écran à la fois : une clé suffit.
-  var stdItineraireKey = "";
+  // Card (item suivi ou zone standard) qui attend qu'on désigne un numéro/une
+  // adresse de destination. Une seule card est à l'écran à la fois : une clé
+  // suffit, pour toute la card — items suivis et zone standard confondus.
+  var courseItineraireKey = "";
 
   // Identité d'une étape de course. La case de casier vient en tête, et ce
   // n'est pas un détail de tri : c'est elle qui fait l'étape.
@@ -1930,7 +1930,15 @@ window.UI = (function () {
     '</div>';
   }
 
+  // Mode itinéraire armé : la ligne ne sert qu'à désigner la destination —
+  // même détournement que stdNumValider, pour une seule logique d'armement.
   function addrDetailBasculer(addrId) {
+    if (courseItineraireKey) {
+      courseItineraireKey = "";
+      naviguerVers(addrId);
+      renderSuiviTournee();
+      return;
+    }
     tourneeAddrDepliees[addrId] = !tourneeAddrDepliees[addrId];
     renderSuiviTournee();
   }
@@ -2007,8 +2015,8 @@ window.UI = (function () {
     // Mode itinéraire armé : le numéro ne sert qu'à désigner la destination.
     // Rien n'est rayé, distribué ni validé — partir vers une boîte n'est pas y
     // avoir déposé le courrier.
-    if (stdItineraireKey) {
-      stdItineraireKey = "";
+    if (courseItineraireKey) {
+      courseItineraireKey = "";
       naviguerVers(addrId);
       renderSuiviTournee();
       return;
@@ -2036,23 +2044,20 @@ window.UI = (function () {
     if (!g.standards.length) return "";
     var key = escapeHtml(g.key);
     var etat = stdEtatHTML(g);
-    var arme = stdItineraireKey === g.key;
+    var arme = courseItineraireKey === g.key;
     return '<div class="std-bloc' + (g.stdTerminee ? " est-fait" : "") + '">' +
       '<div class="std-entete">' +
         '<span class="std-pastille">📮</span>' +
         '<div class="std-titre">Distribution standard' +
           '<div class="std-sous ' + etat.classe + '">' + escapeHtml(etat.texte) + '</div>' +
         '</div>' +
-        // Mêmes trois gestes que sur une adresse d'objet suivi — même
-        // gabarit, même ordre, même bascule — à la place du compteur, que la
-        // ligne d'état sous le titre redit déjà.
+        // Deux gestes seulement : l'itinéraire se lance désormais depuis
+        // l'unique bouton du haut de card, plus le duo stop/valider ici.
         '<div class="addr-actions">' +
-          '<button class="addr-btn nav' + (arme ? " active" : "") + '" data-action="zone-std-itineraire" data-key="' + key + '" aria-label="Itinéraire vers un numéro">🧭</button>' +
           '<button class="addr-btn stop' + (g.stdAbandonnees === g.standards.length ? " active" : "") + '" data-action="zone-std-abandonner" data-key="' + key + '" aria-label="Ne pas distribuer">⊘</button>' +
           '<button class="addr-btn ok' + (g.stdDistribuees === g.standards.length ? " active" : "") + '" data-action="zone-std-valider" data-key="' + key + '" aria-label="Valider la distribution">✓</button>' +
         '</div>' +
       '</div>' +
-      (arme ? '<div class="std-itin-hint">🧭 Sélectionnez un numéro pour lancer l&rsquo;itinéraire.</div>' : "") +
       '<div class="std-numeros' + (arme ? " en-itineraire" : "") + '">' +
         g.standards.map(function (it) { return stdNumeroHTML(it, arme); }).join("") +
       '</div>' +
@@ -2426,19 +2431,21 @@ window.UI = (function () {
     }
 
     var g = groups[tourneeIndex];
+    var arme = courseItineraireKey === g.key;
     els.suiviTourneeWrap.innerHTML =
       '<div class="tournee-card' + (g.standard ? " zone-standard" : "") + '" id="tourneeCardSwipe">' +
         '<div class="tournee-card-head">' +
           (g.commune ? '<span class="commune-dot" style="background:' + S.getCommuneColor(g.commune) + ';"></span>' : "") +
           '<div class="tournee-card-title">' + escapeHtml(g.rue) + '</div>' +
-          '<span class="tournee-casier' + (g.casier ? "" : " hors") + '">' + escapeHtml(g.casierLabel) + '</span>' +
+          '<button type="button" class="addr-btn nav' + (arme ? " active" : "") + '" data-action="course-itineraire-armer" data-key="' + escapeHtml(g.key) + '" aria-label="Itinéraire">🧭</button>' +
         '</div>' +
         (g.commune ? '<div class="tournee-card-sub">' + escapeHtml(S.communeLabel(g.commune, g.lieuDit)) + '</div>' : "") +
+        (arme ? '<div class="std-itin-hint">🧭 Sélectionnez un numéro ou une adresse pour lancer l&rsquo;itinéraire.</div>' : "") +
         (g.standard
           ? ""
           : '<div class="tournee-card-figures">' + zoneTotauxHTML(g) + '</div>' +
             zoneProgressHTML(g) +
-            '<div class="tournee-addr-list">' + g.items.map(tourneeAddrRowHTML).join("") + '</div>') +
+            '<div class="tournee-addr-list' + (arme ? " en-itineraire" : "") + '">' + g.items.map(tourneeAddrRowHTML).join("") + '</div>') +
         zoneStandardHTML(g) +
         etapeActionsHTML(g) +
       '</div>';
@@ -2448,7 +2455,7 @@ window.UI = (function () {
 
   function tourneeNav(delta) {
     var groups = buildTourneeGroups(S.getIdTournee());
-    stdItineraireKey = "";
+    courseItineraireKey = "";
     tourneeIndex += delta;
     clampTourneeIndex(groups);
     allerALaCard(groups);
@@ -2553,10 +2560,11 @@ window.UI = (function () {
     });
   }
 
-  // Armer / désarmer la désignation du point d'arrivée. Un second appui
-  // annule : on ne reste jamais coincé dans un mode dont on ne veut plus.
-  function zoneStdItineraire(key) {
-    stdItineraireKey = stdItineraireKey === key ? "" : key;
+  // Armer / désarmer la désignation du point d'arrivée, pour toute la card
+  // (items suivis et zone standard). Un second appui annule : on ne reste
+  // jamais coincé dans un mode dont on ne veut plus.
+  function courseItineraireArmer(key) {
+    courseItineraireKey = courseItineraireKey === key ? "" : key;
     renderSuiviTournee();
   }
 
@@ -3640,9 +3648,6 @@ window.UI = (function () {
       case "addr-abandonner":
         addrAbandonner(actionEl.getAttribute("data-id"));
         break;
-      case "addr-naviguer":
-        naviguerVers(actionEl.getAttribute("data-id"));
-        break;
       case "addr-detail-basculer":
         addrDetailBasculer(actionEl.getAttribute("data-id"));
         break;
@@ -3655,8 +3660,8 @@ window.UI = (function () {
       case "etape-rouvrir":
         etapeRouvrir(actionEl.getAttribute("data-key"));
         break;
-      case "zone-std-itineraire":
-        zoneStdItineraire(actionEl.getAttribute("data-key"));
+      case "course-itineraire-armer":
+        courseItineraireArmer(actionEl.getAttribute("data-key"));
         break;
       case "zone-std-valider":
         zoneStdValider(actionEl.getAttribute("data-key"));

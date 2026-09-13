@@ -326,14 +326,6 @@ mark{background:#fff2a8;color:inherit;border-radius:3px;padding:0 1px;}
 .tournee-card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;touch-action:pan-y;}
 .tournee-card-head{display:flex;align-items:center;gap:8px;}
 .tournee-card-title{font-size:17px;font-weight:700;flex:1;min-width:0;}
-/* La case de casier, affichée sur la card : c'est elle qui fait l'étape, donc
-   c'est elle qui distingue deux passages d'une même rue. Même pastille verte
-   que dans les Données — on doit reconnaître C3L4 d'un onglet à l'autre. */
-.tournee-casier{
-  flex:0 0 auto;font-size:11.5px;font-weight:800;letter-spacing:.04em;color:var(--accent);
-  background:#e6f2ea;border-radius:8px;padding:3px 8px;font-variant-numeric:tabular-nums;
-}
-.tournee-casier.hors{color:var(--muted);background:var(--chip);letter-spacing:0;}
 .tournee-card-sub{font-size:12.5px;color:var(--muted);margin:2px 0 10px;}
 .tournee-card-figures{font-size:13px;color:var(--muted);margin-bottom:10px;}
 
@@ -436,6 +428,7 @@ mark{background:#fff2a8;color:inherit;border-radius:3px;padding:0 1px;}
 .tournee-addr-row.is-distribue .tournee-addr-name{text-decoration:line-through;opacity:.6;}
 .tournee-addr-row.is-abandonne{background:var(--warn-bg);}
 .tournee-addr-row.is-abandonne .tournee-addr-name{opacity:.7;}
+.tournee-addr-list.en-itineraire .tournee-addr-row{border-color:var(--info);box-shadow:0 0 0 1px var(--info) inset;}
 
 /* trio d'actions par adresse — cibles tactiles de 40px, jamais cachées */
 .addr-actions{display:flex;gap:4px;flex:0 0 auto;}
